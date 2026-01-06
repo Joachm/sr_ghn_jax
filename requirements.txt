@@ -1,0 +1,6 @@
+jax
+jaxlib
+equinox
+gymnax
+brax
+wandb
