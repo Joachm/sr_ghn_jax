@@ -6,7 +6,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
-from .graphs import GraphSpec
+from graphs import GraphSpec
 
 
 class GraphEncoder(eqx.Module):

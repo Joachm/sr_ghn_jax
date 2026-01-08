@@ -20,20 +20,27 @@ def make_env(config):
             act_dim = int(action_space.n)
             is_discrete = True
             action_shape = ()
+            action_low = None
+            action_high = None
         else:
             act_dim = int(prod(action_space.shape))
             is_discrete = False
             action_shape = action_space.shape
-        return env, env_params, obs_dim, act_dim, is_discrete, action_shape
+            action_low = jnp.asarray(action_space.low)
+            action_high = jnp.asarray(action_space.high)
+        return env, env_params, obs_dim, act_dim, is_discrete, action_shape, action_low, action_high
 
     if config.env_backend == "brax":
         from brax import envs
 
-        env = envs.create(config.env_id)
+        if config.brax_backend is None:
+            env = envs.create(config.env_id)
+        else:
+            env = envs.create(config.env_id, backend=config.brax_backend)
         env_params = None
         obs_dim = int(env.observation_size)
         act_dim = int(env.action_size)
-        return env, env_params, obs_dim, act_dim, False, (act_dim,)
+        return env, env_params, obs_dim, act_dim, False, (act_dim,), None, None
 
     raise ValueError(f"Unknown env_backend: {config.env_backend}")
 

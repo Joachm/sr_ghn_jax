@@ -6,12 +6,12 @@ from typing import Tuple
 import jax
 import jax.numpy as jnp
 
-from ..evolution import run_jit
-from ..graphs import GraphSpec, make_chain_graph
-from ..gnn import GraphEncoder
-from ..hypernets import DeterministicHead, StochasticHyper
-from ..specs import ParamNodeSpec, policy_spec_for_task, srghn_self_spec
-from ..srghn import SRGHN
+from evolution import run_jit
+from graphs import GraphSpec, make_chain_graph
+from gnn import GraphEncoder
+from hypernets import DeterministicHead, StochasticHyper
+from specs import ParamNodeSpec, policy_spec_for_task, srghn_self_spec
+from srghn import SRGHN
 
 
 @dataclass(frozen=True)

@@ -8,8 +8,7 @@ class ExperimentConfig:
     task_name: str
     seed: int
     pop_size: int
-    elite_size: int
-    children_per_elite: int
+    children_per_parent: int
     num_generations: int
     episode_horizon: int
     episodes_per_eval: int
@@ -29,6 +28,7 @@ class ExperimentConfig:
     switch_rule: str | None
     env_backend: str
     env_id: str
+    brax_backend: str | None
 
 
 def make_config_cartpole_switch() -> ExperimentConfig:
@@ -36,8 +36,7 @@ def make_config_cartpole_switch() -> ExperimentConfig:
         task_name="cartpole_switch",
         seed=0,
         pop_size=10,
-        elite_size=3,
-        children_per_elite=2,
+        children_per_parent=2,
         num_generations=1500,
         episode_horizon=500,
         episodes_per_eval=1,
@@ -57,6 +56,7 @@ def make_config_cartpole_switch() -> ExperimentConfig:
         switch_rule="cartpole_flip",
         env_backend="gymnax",
         env_id="CartPole-v1",
+        brax_backend=None,
     )
 
 
@@ -65,8 +65,7 @@ def make_config_ant_brax() -> ExperimentConfig:
         task_name="ant_brax",
         seed=0,
         pop_size=50,
-        elite_size=16,
-        children_per_elite=2,
+        children_per_parent=2,
         num_generations=1000,
         episode_horizon=1000,
         episodes_per_eval=1,
@@ -86,6 +85,7 @@ def make_config_ant_brax() -> ExperimentConfig:
         switch_rule=None,
         env_backend="brax",
         env_id="ant",
+        brax_backend=None,
     )
 
 
@@ -96,19 +96,15 @@ def make_config_gymnax_generic(
     pop_size: int = 30,
     num_generations: int = 300,
     episode_horizon: int = 500,
-    elite_size: int | None = None,
-    children_per_elite: int = 2,
+    children_per_parent: int = 2,
     episodes_per_eval: int = 1,
     child_factor: float = 0.0,
 ) -> ExperimentConfig:
-    if elite_size is None:
-        elite_size = max(1, pop_size // 3)
     return ExperimentConfig(
         task_name="gymnax_generic",
         seed=seed,
         pop_size=pop_size,
-        elite_size=elite_size,
-        children_per_elite=children_per_elite,
+        children_per_parent=children_per_parent,
         num_generations=num_generations,
         episode_horizon=episode_horizon,
         episodes_per_eval=episodes_per_eval,
@@ -128,4 +124,45 @@ def make_config_gymnax_generic(
         switch_rule=None,
         env_backend="gymnax",
         env_id=env_id,
+        brax_backend=None,
+    )
+
+
+def make_config_brax_generic(
+    env_id: str,
+    *,
+    seed: int = 0,
+    pop_size: int = 50,
+    num_generations: int = 1000,
+    episode_horizon: int = 1000,
+    children_per_parent: int = 2,
+    episodes_per_eval: int = 1,
+    child_factor: float = 0.0,
+    brax_backend: str | None = None,
+) -> ExperimentConfig:
+    return ExperimentConfig(
+        task_name="brax_generic",
+        seed=seed,
+        pop_size=pop_size,
+        children_per_parent=children_per_parent,
+        num_generations=num_generations,
+        episode_horizon=episode_horizon,
+        episodes_per_eval=episodes_per_eval,
+        embedding_dim=32,
+        gnn_hidden_dim=32,
+        gnn_steps_policy=10,
+        gnn_steps_self=10,
+        stoch_coeff_dim=32,
+        mutation_rate_head_dim=5,
+        clip_params=(-20.0, 20.0),
+        clip_std=(0.0, 2.0),
+        clip_update=(-0.1, 0.1),
+        const_noise_std=0.001,
+        child_factor=child_factor,
+        switch_gen_start=None,
+        switch_gen_end=None,
+        switch_rule=None,
+        env_backend="brax",
+        env_id=env_id,
+        brax_backend=brax_backend,
     )

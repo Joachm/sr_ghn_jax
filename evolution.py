@@ -7,14 +7,14 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
-from .envs import make_env
-from .graphs import GraphSpec
-from .hypernets import DeterministicHead, StochasticHyper
-from .metrics import compute_metrics
-from .rollout import evaluate_individual
-from .srghn import SRGHN, mutate
-from .gnn import GraphEncoder
-from .specs import ParamNodeSpec
+from envs import make_env
+from graphs import GraphSpec
+from hypernets import DeterministicHead, StochasticHyper
+from metrics import compute_metrics
+from rollout import evaluate_individual
+from srghn import SRGHN, mutate
+from gnn import GraphEncoder
+from specs import ParamNodeSpec
 
 
 @jax.tree_util.register_pytree_node_class
@@ -123,9 +123,9 @@ def evo_step(state: EvoState, gen: jnp.int32, config) -> tuple[EvoState, dict]:
         )
 
     pop_arr, pop_static = eqx.partition(state.pop, eqx.is_array)
-    num_children = config.pop_size * config.children_per_elite
+    num_children = config.pop_size * config.children_per_parent
     child_keys = jax.random.split(key_children, num_children)
-    parent_idx = jnp.repeat(jnp.arange(config.pop_size), config.children_per_elite)
+    parent_idx = jnp.repeat(jnp.arange(config.pop_size), config.children_per_parent)
     parents_rep_arr = jax.tree_util.tree_map(lambda x: x[parent_idx], pop_arr)
     parents_rep = eqx.combine(parents_rep_arr, pop_static)
     children = eqx.filter_vmap(mutate)(parents_rep, child_keys)
@@ -142,7 +142,7 @@ def evo_step(state: EvoState, gen: jnp.int32, config) -> tuple[EvoState, dict]:
     )(all_idxs, eval_keys)
     parent_fitness = all_fitness[: config.pop_size]
     child_fitness = all_fitness[config.pop_size :]
-    child_fitness = child_fitness.reshape(config.pop_size, config.children_per_elite)
+    child_fitness = child_fitness.reshape(config.pop_size, config.children_per_parent)
     blended_parent = (1.0 - config.child_factor) * parent_fitness + config.child_factor * jnp.mean(
         child_fitness, axis=1
     )
@@ -157,8 +157,9 @@ def evo_step(state: EvoState, gen: jnp.int32, config) -> tuple[EvoState, dict]:
 
 
 def run(key: jax.random.KeyArray, config, graphs, specs):
-    init_pop = init_population(key, config, graphs, specs)
-    init_state = EvoState(pop=init_pop, key=key)
+    key_init, key_loop = jax.random.split(key, 2)
+    init_pop = init_population(key_init, config, graphs, specs)
+    init_state = EvoState(pop=init_pop, key=key_loop)
     gens = jnp.arange(config.num_generations, dtype=jnp.int32)
 
     def step_fn(state, gen):

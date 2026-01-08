@@ -3,13 +3,13 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 
-from .envs import make_env, map_action_for_switch
-from .policy import apply_policy
-from .srghn import make_policy
+from envs import make_env, map_action_for_switch
+from policy import apply_policy
+from srghn import make_policy
 
 
 def rollout_episode(policy_params, key: jax.random.KeyArray, gen: jnp.ndarray, config) -> jnp.ndarray:
-    env, env_params, _, _, is_discrete, action_shape = make_env(config)
+    env, env_params, _, _, is_discrete, action_shape, action_low, action_high = make_env(config)
 
     if config.env_backend == "gymnax":
         key, key_reset = jax.random.split(key, 2)
@@ -24,6 +24,8 @@ def rollout_episode(policy_params, key: jax.random.KeyArray, gen: jnp.ndarray, c
                 action = jnp.asarray(action, dtype=jnp.int32)
             else:
                 action = action.reshape(action_shape)
+                if action_low is not None:
+                    action = action_low + (action + 1.0) * 0.5 * (action_high - action_low)
             next_obs, next_state, reward, done, _ = env.step(key_step, state_t, action, env_params)
             reward = reward * (1.0 - done_t.astype(reward.dtype))
             done = jnp.logical_or(done_t, done)
@@ -40,6 +42,8 @@ def rollout_episode(policy_params, key: jax.random.KeyArray, gen: jnp.ndarray, c
             action = map_action_for_switch(action, gen, config)
             if not is_discrete:
                 action = action.reshape(action_shape)
+                if action_low is not None:
+                    action = action_low + (action + 1.0) * 0.5 * (action_high - action_low)
             next_state = env.step(state_t, action)
             next_obs = next_state.obs
             reward = next_state.reward

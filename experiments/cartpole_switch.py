@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pickle
 
-from ..configs import make_config_cartpole_switch
-from ._common import run_experiment
+from configs import make_config_cartpole_switch
+from experiments._common import run_experiment
 
 
 def main():

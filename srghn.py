@@ -4,10 +4,10 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
-from .gnn import GraphEncoder
-from .graphs import GraphSpec
-from .hypernets import DeterministicHead, StochasticHyper
-from .specs import ParamNodeSpec, _srghn_filter_spec
+from gnn import GraphEncoder
+from graphs import GraphSpec
+from hypernets import DeterministicHead, StochasticHyper
+from specs import ParamNodeSpec, _srghn_filter_spec
 
 
 class SRGHN(eqx.Module):
