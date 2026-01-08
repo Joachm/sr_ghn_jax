@@ -1,0 +1,39 @@
+{
+  "os": "macOS-26.1-arm64-arm-64bit",
+  "python": "CPython 3.10.19",
+  "startedAt": "2026-01-08T13:52:01.927526Z",
+  "args": [
+    "--backend",
+    "mjx"
+  ],
+  "program": "-m experiments.ant_brax",
+  "git": {
+    "remote": "git@github.com:Joachm/sr_ghn_jax.git",
+    "commit": "85cd5f18eb55dee9d59462abf820f9aca598ba09"
+  },
+  "email": "joachim.w.pedersen@gmail.com",
+  "root": "/Users/jwin/Library/CloudStorage/OneDrive-ITU/desktop/projects/sr_ghn_jax",
+  "host": "mac623819 ",
+  "executable": "/Users/jwin/miniconda3/envs/srghn-jax/bin/python",
+  "cpu_count": 10,
+  "cpu_count_logical": 10,
+  "disk": {
+    "/": {
+      "total": "994662584320",
+      "used": "623488495616"
+    }
+  },
+  "memory": {
+    "total": "17179869184"
+  },
+  "apple": {
+    "name": "Apple M2 Pro",
+    "ecpuCores": 4,
+    "pcpuCores": 6,
+    "gpuCores": 16,
+    "memoryGb": 16,
+    "swapTotalBytes": "6442450944",
+    "ramTotalBytes": "17179869184"
+  },
+  "writerId": "ifqhxtjy47ayduywjl9srv7farjshzn0"
+}

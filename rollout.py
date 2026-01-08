@@ -27,7 +27,7 @@ def rollout_episode(policy_params, key: jax.random.KeyArray, gen: jnp.ndarray, c
                 if action_low is not None:
                     action = action_low + (action + 1.0) * 0.5 * (action_high - action_low)
             next_obs, next_state, reward, done, _ = env.step(key_step, state_t, action, env_params)
-            reward = reward * (1.0 - done_t.astype(reward.dtype))
+            reward = jnp.where(done_t, jnp.zeros_like(reward), reward)
             done = jnp.logical_or(done_t, done)
             return (next_obs, next_state, done, key_t), reward
 
@@ -48,7 +48,7 @@ def rollout_episode(policy_params, key: jax.random.KeyArray, gen: jnp.ndarray, c
             next_obs = next_state.obs
             reward = next_state.reward
             done = next_state.done
-            reward = reward * (1.0 - done_t.astype(reward.dtype))
+            reward = jnp.where(done_t, jnp.zeros_like(reward), reward)
             done = jnp.logical_or(done_t, done)
             return (next_obs, next_state, done, key_t), reward
 
