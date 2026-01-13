@@ -147,7 +147,8 @@ def evo_step(state: EvoState, gen: jnp.int32, config) -> tuple[EvoState, dict]:
         child_fitness, axis=1
     )
     selection_fitness = jnp.concatenate([blended_parent, child_fitness.reshape(-1)], axis=0)
-    metrics = compute_metrics(state.pop, selection_fitness)
+    # Log raw environment fitness, not the blended selection fitness.
+    metrics = compute_metrics(state.pop, all_fitness)
     jax.debug.callback(_wandb_log, metrics, gen)
     select_idx = jnp.argsort(selection_fitness)[-config.pop_size :]
     next_arr = jax.tree_util.tree_map(lambda x: x[select_idx], all_arr)
