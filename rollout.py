@@ -26,8 +26,16 @@ def rollout_episode(policy_params, key: jax.random.KeyArray, gen: jnp.ndarray, c
                 action = action.reshape(action_shape)
                 if action_low is not None:
                     action = action_low + (action + 1.0) * 0.5 * (action_high - action_low)
-            next_obs, next_state, reward, done, _ = env.step(key_step, state_t, action, env_params)
-            reward = jnp.where(done_t, jnp.zeros_like(reward), reward)
+
+            def do_step(_):
+                next_obs, next_state, reward, done, _ = env.step(key_step, state_t, action, env_params)
+                return next_obs, next_state, reward, done
+
+            def skip_step(_):
+                zero = jnp.zeros((), dtype=jnp.float32)
+                return obs_t, state_t, zero, done_t
+
+            next_obs, next_state, reward, done = jax.lax.cond(done_t, skip_step, do_step, operand=None)
             done = jnp.logical_or(done_t, done)
             return (next_obs, next_state, done, key_t), reward
 
@@ -44,11 +52,16 @@ def rollout_episode(policy_params, key: jax.random.KeyArray, gen: jnp.ndarray, c
                 action = action.reshape(action_shape)
                 if action_low is not None:
                     action = action_low + (action + 1.0) * 0.5 * (action_high - action_low)
-            next_state = env.step(state_t, action)
-            next_obs = next_state.obs
-            reward = next_state.reward
-            done = next_state.done
-            reward = jnp.where(done_t, jnp.zeros_like(reward), reward)
+
+            def do_step(_):
+                next_state = env.step(state_t, action)
+                return next_state.obs, next_state, next_state.reward, next_state.done
+
+            def skip_step(_):
+                zero = jnp.zeros((), dtype=jnp.float32)
+                return obs_t, state_t, zero, done_t
+
+            next_obs, next_state, reward, done = jax.lax.cond(done_t, skip_step, do_step, operand=None)
             done = jnp.logical_or(done_t, done)
             return (next_obs, next_state, done, key_t), reward
 

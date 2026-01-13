@@ -26,4 +26,4 @@ def apply_policy(
     logits = _mlp_forward(policy_params, obs)
     if is_discrete:
         return jnp.argmax(logits)
-    return jnp.clip(logits, -1.0, 1.0)
+    return jnp.tanh(logits)
