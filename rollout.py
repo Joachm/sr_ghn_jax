@@ -29,6 +29,8 @@ def rollout_episode(policy_params, key: jax.random.KeyArray, gen: jnp.ndarray, c
 
             def do_step(_):
                 next_obs, next_state, reward, done, _ = env.step(key_step, state_t, action, env_params)
+                reward = jnp.asarray(reward, dtype=jnp.float32)
+                done = jnp.asarray(done, dtype=jnp.bool_)
                 return next_obs, next_state, reward, done
 
             def skip_step(_):
@@ -55,7 +57,9 @@ def rollout_episode(policy_params, key: jax.random.KeyArray, gen: jnp.ndarray, c
 
             def do_step(_):
                 next_state = env.step(state_t, action)
-                return next_state.obs, next_state, next_state.reward, next_state.done
+                reward = jnp.asarray(next_state.reward, dtype=jnp.float32)
+                done = jnp.asarray(next_state.done, dtype=jnp.bool_)
+                return next_state.obs, next_state, reward, done
 
             def skip_step(_):
                 zero = jnp.zeros((), dtype=jnp.float32)
