@@ -92,7 +92,7 @@ def run_experiment(config):
         import wandb
 
         if wandb.run is None:
-            wandb.init(project="srghn_jax", name=config.task_name)
+            wandb.init(project="srghn_jax", name=config.env_id, config=config.__dict__)
     except Exception:
         wandb = None
     graph_tuple = (graphs.self_graph, graphs.policy_graph)

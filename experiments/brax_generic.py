@@ -15,24 +15,31 @@ def main():
         default=None,
         help="Brax backend, e.g., spring, generalized, mjx (defaults to Brax default).",
     )
-    parser.add_argument("--pop-size", type=int, default=50)
-    parser.add_argument("--num-generations", type=int, default=1000)
-    parser.add_argument("--episode-horizon", type=int, default=1000)
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--children-per-parent", type=int, default=2)
-    parser.add_argument("--episodes-per-eval", type=int, default=1)
+    parser.add_argument("--pop-size", type=int, default=None)
+    parser.add_argument("--num-generations", type=int, default=None)
+    parser.add_argument("--episode-horizon", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--children-per-parent", type=int, default=None)
+    parser.add_argument("--episodes-per-eval", type=int, default=None)
     args = parser.parse_args()
 
-    config = make_config_brax_generic(
-        args.env_id,
-        seed=args.seed,
-        pop_size=args.pop_size,
-        num_generations=args.num_generations,
-        episode_horizon=args.episode_horizon,
-        children_per_parent=args.children_per_parent,
-        episodes_per_eval=args.episodes_per_eval,
-        brax_backend=args.backend,
-    )
+    config_kwargs = {
+        "brax_backend": args.backend,
+    }
+    if args.seed is not None:
+        config_kwargs["seed"] = args.seed
+    if args.pop_size is not None:
+        config_kwargs["pop_size"] = args.pop_size
+    if args.num_generations is not None:
+        config_kwargs["num_generations"] = args.num_generations
+    if args.episode_horizon is not None:
+        config_kwargs["episode_horizon"] = args.episode_horizon
+    if args.children_per_parent is not None:
+        config_kwargs["children_per_parent"] = args.children_per_parent
+    if args.episodes_per_eval is not None:
+        config_kwargs["episodes_per_eval"] = args.episodes_per_eval
+
+    config = make_config_brax_generic(args.env_id, **config_kwargs)
     final_state, metrics = run_experiment(config)
     out_name = f"brax_{args.env_id}_metrics.pkl"
     with open(out_name, "wb") as f:
