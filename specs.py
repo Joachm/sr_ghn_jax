@@ -46,6 +46,63 @@ def _sizes_from_shapes(shapes: Iterable[tuple[int, ...]]) -> tuple[int, ...]:
     return tuple(int(prod(shape)) for shape in shapes)
 
 
+def _infer_obs_dim(env) -> int:
+    if hasattr(env, "observation_size"):
+        return int(env.observation_size)
+    if hasattr(env, "obs_size"):
+        return int(env.obs_size)
+    obs_space = getattr(env, "observation_space", None)
+    if callable(obs_space):
+        try:
+            obs_space = obs_space()
+        except TypeError:
+            pass
+    if obs_space is not None and hasattr(obs_space, "shape"):
+        return int(prod(obs_space.shape))
+    raise ValueError("Unable to infer observation size from environment.")
+
+
+def _infer_action_dim(env) -> int:
+    action_space = getattr(env, "action_space", None)
+    if callable(action_space):
+        try:
+            action_space = action_space()
+        except TypeError:
+            pass
+
+    if action_space is not None:
+        if hasattr(action_space, "nvec"):
+            raise ValueError("MultiDiscrete action spaces are not supported.")
+        if hasattr(action_space, "n"):
+            return int(action_space.n)
+        if hasattr(action_space, "shape"):
+            return int(prod(action_space.shape))
+
+    if hasattr(env, "action_size"):
+        return int(env.action_size)
+
+    raise ValueError("Unable to infer action size from environment.")
+
+
+def _load_mujoco_playground_env(env_id: str):
+    from mujoco_playground import suite
+
+    if ":" in env_id:
+        domain, task = env_id.split(":", 1)
+        return suite.load(domain, task)
+    if "/" in env_id:
+        domain, task = env_id.split("/", 1)
+        return suite.load(domain, task)
+    if hasattr(suite, "load"):
+        try:
+            return suite.load(env_id)
+        except TypeError:
+            pass
+    if hasattr(suite, "make"):
+        return suite.make(env_id)
+    raise ValueError("Unsupported mujoco_playground suite API.")
+
+
 def policy_spec_for_task(config) -> ParamNodeSpec:
     task = config.task_name.lower()
     if task == "cartpole_switch":
@@ -82,6 +139,11 @@ def policy_spec_for_task(config) -> ParamNodeSpec:
         else:
             act_dim = int(prod(action_space.shape))
         shapes = _mlp_param_shapes(obs_dim, (32,), act_dim)
+    elif task == "mujoco_playground_generic":
+        env = _load_mujoco_playground_env(config.env_id)
+        obs_dim = _infer_obs_dim(env)
+        act_dim = _infer_action_dim(env)
+        shapes = _mlp_param_shapes(obs_dim, (32, 32, 32), act_dim)
     else:
         raise ValueError(f"Unknown task_name: {config.task_name}")
 

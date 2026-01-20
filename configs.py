@@ -166,3 +166,42 @@ def make_config_brax_generic(
         env_id=env_id,
         brax_backend=brax_backend,
     )
+
+
+def make_config_mujoco_playground_generic(
+    env_id: str,
+    *,
+    seed: int = 0,
+    pop_size: int = 50,
+    num_generations: int = 1000,
+    episode_horizon: int = 1000,
+    children_per_parent: int = 2,
+    episodes_per_eval: int = 1,
+    child_factor: float = 0.0,
+) -> ExperimentConfig:
+    return ExperimentConfig(
+        task_name="mujoco_playground_generic",
+        seed=seed,
+        pop_size=pop_size,
+        children_per_parent=children_per_parent,
+        num_generations=num_generations,
+        episode_horizon=episode_horizon,
+        episodes_per_eval=episodes_per_eval,
+        embedding_dim=32,
+        gnn_hidden_dim=32,
+        gnn_steps_policy=10,
+        gnn_steps_self=10,
+        stoch_coeff_dim=32,
+        mutation_rate_head_dim=5,
+        clip_params=(-20.0, 20.0),
+        clip_std=(0.0, 2.0),
+        clip_update=(-0.1, 0.1),
+        const_noise_std=0.001,
+        child_factor=child_factor,
+        switch_gen_start=None,
+        switch_gen_end=None,
+        switch_rule=None,
+        env_backend="mujoco_playground",
+        env_id=env_id,
+        brax_backend=None,
+    )

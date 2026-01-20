@@ -50,7 +50,9 @@ def rollout_episode(policy_params, key: jax.random.KeyArray, gen: jnp.ndarray, c
             key_t, key_step = jax.random.split(key_t, 2)
             action = apply_policy(policy_params, obs_t, is_discrete=is_discrete)
             action = map_action_for_switch(action, gen, config)
-            if not is_discrete:
+            if is_discrete:
+                action = jnp.asarray(action, dtype=jnp.int32)
+            else:
                 action = action.reshape(action_shape)
                 if action_low is not None:
                     action = action_low + (action + 1.0) * 0.5 * (action_high - action_low)

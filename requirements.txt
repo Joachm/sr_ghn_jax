@@ -4,3 +4,4 @@ equinox
 gymnax
 brax
 wandb
+mujoco-playground
