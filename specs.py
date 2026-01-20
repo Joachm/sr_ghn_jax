@@ -85,7 +85,7 @@ def _infer_action_dim(env) -> int:
 
 
 def _load_mujoco_playground_env(env_id: str):
-    from mujoco_playground import suite
+    from mujoco_playground import registry as suite
 
     if ":" in env_id:
         domain, task = env_id.split(":", 1)
