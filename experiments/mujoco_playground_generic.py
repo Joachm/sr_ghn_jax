@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import pickle
-
 from configs import make_config_mujoco_playground_generic
 from experiments._common import run_experiment
 
@@ -37,11 +35,7 @@ def main():
         config_kwargs["episodes_per_eval"] = args.episodes_per_eval
 
     config = make_config_mujoco_playground_generic(args.env_id, **config_kwargs)
-    final_state, metrics = run_experiment(config)
-    safe_env_id = args.env_id.replace("/", "_").replace(":", "_")
-    out_name = f"mujoco_playground_{safe_env_id}_metrics.pkl"
-    with open(out_name, "wb") as f:
-        pickle.dump(metrics, f)
+    run_experiment(config)
 
 
 if __name__ == "__main__":

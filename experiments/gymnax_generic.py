@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import pickle
-
 from configs import make_config_gymnax_generic
 from experiments._common import run_experiment
 
@@ -27,10 +25,7 @@ def main():
         children_per_parent=args.children_per_parent,
         episodes_per_eval=args.episodes_per_eval,
     )
-    final_state, metrics = run_experiment(config)
-    out_name = f"gymnax_{args.env_id}_metrics.pkl"
-    with open(out_name, "wb") as f:
-        pickle.dump(metrics, f)
+    run_experiment(config)
 
 
 if __name__ == "__main__":
