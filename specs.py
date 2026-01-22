@@ -155,6 +155,11 @@ def policy_spec_for_task(config) -> ParamNodeSpec:
 def _srghn_filter_spec(srghn_module: eqx.Module):
     filter_spec = jax.tree_util.tree_map(eqx.is_array, srghn_module)
     filter_spec = eqx.tree_at(lambda m: m.stoch.basis, filter_spec, False)
+    filter_spec = eqx.tree_at(
+        lambda m: (m.det.linear.weight, m.det.linear.bias),
+        filter_spec,
+        (False, False),
+    )
     return filter_spec
 
 
