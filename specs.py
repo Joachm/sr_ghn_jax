@@ -13,19 +13,46 @@ import jax.numpy as jnp
 @dataclass(frozen=True)
 class ParamNodeSpec:
     shapes: tuple[tuple[int, ...], ...]
+    param_sizes: tuple[int, ...]
     sizes: tuple[int, ...]
     max_size: int
     num_nodes: int
+    shard_param_idxs: tuple[int, ...]
+    shard_starts: tuple[int, ...]
 
     def tree_flatten(self):
         children = ()
-        aux_data = (self.shapes, self.sizes, self.max_size, self.num_nodes)
+        aux_data = (
+            self.shapes,
+            self.param_sizes,
+            self.sizes,
+            self.max_size,
+            self.num_nodes,
+            self.shard_param_idxs,
+            self.shard_starts,
+        )
         return children, aux_data
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
-        shapes, sizes, max_size, num_nodes = aux_data
-        return cls(shapes=shapes, sizes=sizes, max_size=max_size, num_nodes=num_nodes)
+        (
+            shapes,
+            param_sizes,
+            sizes,
+            max_size,
+            num_nodes,
+            shard_param_idxs,
+            shard_starts,
+        ) = aux_data
+        return cls(
+            shapes=shapes,
+            param_sizes=param_sizes,
+            sizes=sizes,
+            max_size=max_size,
+            num_nodes=num_nodes,
+            shard_param_idxs=shard_param_idxs,
+            shard_starts=shard_starts,
+        )
 
 
 def _linear_param_shapes(layer_in: int, layer_out: int) -> Sequence[tuple[int, ...]]:
@@ -103,7 +130,31 @@ def _load_mujoco_playground_env(env_id: str):
     raise ValueError("Unsupported mujoco_playground suite API.")
 
 
-def policy_spec_for_task(config) -> ParamNodeSpec:
+def _make_sharded_spec(shapes: tuple[tuple[int, ...], ...], shard_size: int) -> ParamNodeSpec:
+    if shard_size <= 0:
+        raise ValueError("shard_size must be positive.")
+    param_sizes = _sizes_from_shapes(shapes)
+    shard_param_idxs: list[int] = []
+    shard_starts: list[int] = []
+    shard_sizes: list[int] = []
+    for param_idx, size in enumerate(param_sizes):
+        for start in range(0, size, shard_size):
+            end = min(size, start + shard_size)
+            shard_param_idxs.append(param_idx)
+            shard_starts.append(start)
+            shard_sizes.append(end - start)
+    return ParamNodeSpec(
+        shapes=shapes,
+        param_sizes=param_sizes,
+        sizes=tuple(shard_sizes),
+        max_size=shard_size,
+        num_nodes=len(shard_sizes),
+        shard_param_idxs=tuple(shard_param_idxs),
+        shard_starts=tuple(shard_starts),
+    )
+
+
+def policy_spec_for_task(config, shard_size: int) -> ParamNodeSpec:
     task = config.task_name.lower()
     if task == "cartpole_switch":
         shapes = _mlp_param_shapes(4, (32,), 2)
@@ -147,9 +198,7 @@ def policy_spec_for_task(config) -> ParamNodeSpec:
     else:
         raise ValueError(f"Unknown task_name: {config.task_name}")
 
-    sizes = _sizes_from_shapes(shapes)
-    max_size = max(sizes) if sizes else 0
-    return ParamNodeSpec(shapes=shapes, sizes=sizes, max_size=max_size, num_nodes=len(shapes))
+    return _make_sharded_spec(shapes, shard_size)
 
 
 def _srghn_filter_spec(srghn_module: eqx.Module):
@@ -163,11 +212,9 @@ def _srghn_filter_spec(srghn_module: eqx.Module):
     return filter_spec
 
 
-def srghn_self_spec(srghn_module: eqx.Module) -> ParamNodeSpec:
+def srghn_self_spec(srghn_module: eqx.Module, shard_size: int) -> ParamNodeSpec:
     filter_spec = _srghn_filter_spec(srghn_module)
     filtered = eqx.filter(srghn_module, filter_spec)
     leaves = [leaf for leaf in jax.tree_util.tree_leaves(filtered) if eqx.is_array(leaf)]
     shapes = tuple(tuple(int(d) for d in leaf.shape) for leaf in leaves)
-    sizes = _sizes_from_shapes(shapes)
-    max_size = max(sizes) if sizes else 0
-    return ParamNodeSpec(shapes=shapes, sizes=sizes, max_size=max_size, num_nodes=len(shapes))
+    return _make_sharded_spec(shapes, shard_size)

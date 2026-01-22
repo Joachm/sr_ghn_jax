@@ -65,7 +65,7 @@ def _build_template_srghn(num_self_nodes: int, policy_spec: ParamNodeSpec, confi
         det=det,
         self_graph=make_chain_graph(num_self_nodes, bidir=True),
         policy_graph=make_chain_graph(policy_spec.num_nodes, bidir=True),
-        self_spec=ParamNodeSpec((), (), 0, 0),
+        self_spec=ParamNodeSpec((), (), (), 0, 0, (), ()),
         policy_spec=policy_spec,
         clip_params=config.clip_params,
     )
@@ -73,14 +73,14 @@ def _build_template_srghn(num_self_nodes: int, policy_spec: ParamNodeSpec, confi
 
 def build_graphs_and_specs(config) -> tuple[GraphBundle, SpecBundle]:
     key = jax.random.key(config.seed)
-    policy_spec = policy_spec_for_task(config)
+    policy_spec = policy_spec_for_task(config, config.stoch_max_out)
 
     temp_srghn = _build_template_srghn(1, policy_spec, config, key)
-    provisional_spec = srghn_self_spec(temp_srghn)
+    provisional_spec = srghn_self_spec(temp_srghn, config.stoch_max_out)
     num_self_nodes = provisional_spec.num_nodes
 
     final_srghn = _build_template_srghn(num_self_nodes, policy_spec, config, key)
-    self_spec = srghn_self_spec(final_srghn)
+    self_spec = srghn_self_spec(final_srghn, config.stoch_max_out)
 
     graphs = GraphBundle(
         self_graph=make_chain_graph(self_spec.num_nodes, bidir=True),

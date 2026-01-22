@@ -17,6 +17,7 @@ class ExperimentConfig:
     gnn_steps_policy: int
     gnn_steps_self: int
     stoch_coeff_dim: int
+    stoch_max_out: int
     mutation_rate_head_dim: int
     clip_params: tuple[float, float]
     clip_std: tuple[float, float]
@@ -45,6 +46,7 @@ def make_config_cartpole_switch() -> ExperimentConfig:
         gnn_steps_policy=10,
         gnn_steps_self=10,
         stoch_coeff_dim=32,
+        stoch_max_out=1024,
         mutation_rate_head_dim=5,
         clip_params=(-20.0, 20.0),
         clip_std=(0.0, 2.0),
@@ -74,6 +76,7 @@ def make_config_ant_brax() -> ExperimentConfig:
         gnn_steps_policy=10,
         gnn_steps_self=10,
         stoch_coeff_dim=32,
+        stoch_max_out=1024,
         mutation_rate_head_dim=5,
         clip_params=(-20.0, 20.0),
         clip_std=(0.0, 2.0),
@@ -113,6 +116,7 @@ def make_config_gymnax_generic(
         gnn_steps_policy=10,
         gnn_steps_self=10,
         stoch_coeff_dim=32,
+        stoch_max_out=1024,
         mutation_rate_head_dim=5,
         clip_params=(-20.0, 20.0),
         clip_std=(0.0, 2.0),
@@ -153,6 +157,7 @@ def make_config_brax_generic(
         gnn_steps_policy=10,
         gnn_steps_self=10,
         stoch_coeff_dim=32,
+        stoch_max_out=1024,
         mutation_rate_head_dim=5,
         clip_params=(-20.0, 20.0),
         clip_std=(0.0, 2.0),
@@ -192,6 +197,7 @@ def make_config_mujoco_playground_generic(
         gnn_steps_policy=10,
         gnn_steps_self=10,
         stoch_coeff_dim=32,
+        stoch_max_out=1024,
         mutation_rate_head_dim=2,
         clip_params=(-20.0, 20.0),
         clip_std=(0.0, 2.0),
