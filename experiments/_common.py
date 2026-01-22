@@ -75,12 +75,23 @@ def build_graphs_and_specs(config) -> tuple[GraphBundle, SpecBundle]:
     key = jax.random.key(config.seed)
     policy_spec = policy_spec_for_task(config, config.stoch_max_out)
 
-    temp_srghn = _build_template_srghn(1, policy_spec, config, key)
-    provisional_spec = srghn_self_spec(temp_srghn, config.stoch_max_out)
-    num_self_nodes = provisional_spec.num_nodes
+    num_self_nodes = 1
+    self_spec = None
+    for _ in range(10):
+        temp_srghn = _build_template_srghn(num_self_nodes, policy_spec, config, key)
+        provisional_spec = srghn_self_spec(temp_srghn, config.stoch_max_out)
+        if provisional_spec.num_nodes == num_self_nodes:
+            self_spec = provisional_spec
+            break
+        num_self_nodes = provisional_spec.num_nodes
+
+    if self_spec is None:
+        raise ValueError("Failed to converge on self graph size for SRGHN parameters.")
 
     final_srghn = _build_template_srghn(num_self_nodes, policy_spec, config, key)
     self_spec = srghn_self_spec(final_srghn, config.stoch_max_out)
+    if self_spec.num_nodes != num_self_nodes:
+        raise ValueError("Self graph size did not stabilize; increase iteration budget.")
 
     graphs = GraphBundle(
         self_graph=make_chain_graph(self_spec.num_nodes, bidir=True),
