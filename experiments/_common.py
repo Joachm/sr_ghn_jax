@@ -79,7 +79,8 @@ def build_graphs_and_specs(config) -> tuple[GraphBundle, SpecBundle]:
 
     num_self_nodes = 1
     self_spec = None
-    for _ in range(10):
+    max_iters = 200
+    for _ in range(max_iters):
         temp_srghn = _build_template_srghn(num_self_nodes, policy_spec, config, key)
         provisional_spec = srghn_self_spec(temp_srghn, config.stoch_max_out)
         if provisional_spec.num_nodes == num_self_nodes:
@@ -88,7 +89,10 @@ def build_graphs_and_specs(config) -> tuple[GraphBundle, SpecBundle]:
         num_self_nodes = provisional_spec.num_nodes
 
     if self_spec is None:
-        raise ValueError("Failed to converge on self graph size for SRGHN parameters.")
+        raise ValueError(
+            "Failed to converge on self graph size for SRGHN parameters "
+            f"after {max_iters} iterations. Last estimate: {num_self_nodes}."
+        )
 
     final_srghn = _build_template_srghn(num_self_nodes, policy_spec, config, key)
     self_spec = srghn_self_spec(final_srghn, config.stoch_max_out)
