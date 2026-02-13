@@ -91,6 +91,8 @@ def _init_single(key: jax.random.KeyArray, config, graphs, specs) -> SRGHN:
         self_spec=self_spec,
         policy_spec=policy_spec,
         clip_params=config.clip_params,
+        mutation_scale_alpha=config.mutation_scale_alpha,
+        mutation_norm_eps=config.mutation_norm_eps,
     )
 
 

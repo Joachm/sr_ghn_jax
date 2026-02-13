@@ -23,6 +23,8 @@ class ExperimentConfig:
     clip_std: tuple[float, float]
     clip_update: tuple[float, float]
     const_noise_std: float
+    mutation_scale_alpha: float
+    mutation_norm_eps: float
     child_factor: float
     switch_gen_start: int | None
     switch_gen_end: int | None
@@ -52,6 +54,8 @@ def make_config_cartpole_switch() -> ExperimentConfig:
         clip_std=(0.0, 2.0),
         clip_update=(-1.0, 1.0),
         const_noise_std=0.001,
+        mutation_scale_alpha=0.05,
+        mutation_norm_eps=1e-8,
         child_factor=0.0,
         switch_gen_start=600,
         switch_gen_end=1200,
@@ -82,6 +86,8 @@ def make_config_ant_brax() -> ExperimentConfig:
         clip_std=(0.0, 2.0),
         clip_update=(-.1, .1),
         const_noise_std=0.001,
+        mutation_scale_alpha=0.05,
+        mutation_norm_eps=1e-8,
         child_factor=0.0,
         switch_gen_start=None,
         switch_gen_end=None,
@@ -122,6 +128,8 @@ def make_config_gymnax_generic(
         clip_std=(0.0, 2.0),
         clip_update=(-1.0, 1.0),
         const_noise_std=0.001,
+        mutation_scale_alpha=0.05,
+        mutation_norm_eps=1e-8,
         child_factor=child_factor,
         switch_gen_start=None,
         switch_gen_end=None,
@@ -163,6 +171,8 @@ def make_config_brax_generic(
         clip_std=(0.0, 2.0),
         clip_update=(-0.1, 0.1),
         const_noise_std=0.001,
+        mutation_scale_alpha=0.05,
+        mutation_norm_eps=1e-8,
         child_factor=child_factor,
         switch_gen_start=None,
         switch_gen_end=None,
@@ -203,6 +213,8 @@ def make_config_mujoco_playground_generic(
         clip_std=(0.0, 2.0),
         clip_update=(-0.1, 0.1),
         const_noise_std=0.001,
+        mutation_scale_alpha=0.05,
+        mutation_norm_eps=1e-8,
         child_factor=child_factor,
         switch_gen_start=None,
         switch_gen_end=None,
