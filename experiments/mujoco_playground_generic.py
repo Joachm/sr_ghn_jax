@@ -31,6 +31,12 @@ def main():
         default=None,
         help="Comma-separated hidden sizes, e.g., 64,64,32",
     )
+    parser.add_argument(
+        "--freeze-stoch-output-head",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Freeze/unfreeze stochastic output basis (use --freeze-stoch-output-head or --no-freeze-stoch-output-head).",
+    )
     args = parser.parse_args()
 
     config_kwargs = {}
@@ -48,6 +54,8 @@ def main():
         config_kwargs["episodes_per_eval"] = args.episodes_per_eval
     if args.policy_hidden_dims is not None:
         config_kwargs["policy_hidden_dims"] = args.policy_hidden_dims
+    if args.freeze_stoch_output_head is not None:
+        config_kwargs["freeze_stoch_output_head"] = args.freeze_stoch_output_head
 
     config = make_config_mujoco_playground_generic(args.env_id, **config_kwargs)
     run_experiment(config)

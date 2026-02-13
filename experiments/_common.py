@@ -68,6 +68,7 @@ def _build_template_srghn(num_self_nodes: int, policy_spec: ParamNodeSpec, confi
         self_spec=ParamNodeSpec((), (), (), 0, 0, (), ()),
         policy_spec=policy_spec,
         clip_params=config.clip_params,
+        freeze_stoch_output_head=config.freeze_stoch_output_head,
     )
 
 

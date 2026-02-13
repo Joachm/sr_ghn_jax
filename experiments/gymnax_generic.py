@@ -27,6 +27,12 @@ def main():
         default=(32,),
         help="Comma-separated hidden sizes, e.g., 64,64,32",
     )
+    parser.add_argument(
+        "--freeze-stoch-output-head",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Freeze/unfreeze stochastic output basis (use --freeze-stoch-output-head or --no-freeze-stoch-output-head).",
+    )
     args = parser.parse_args()
 
     config = make_config_gymnax_generic(
@@ -38,6 +44,9 @@ def main():
         children_per_parent=args.children_per_parent,
         episodes_per_eval=args.episodes_per_eval,
         policy_hidden_dims=args.policy_hidden_dims,
+        freeze_stoch_output_head=(
+            False if args.freeze_stoch_output_head is None else args.freeze_stoch_output_head
+        ),
     )
     run_experiment(config)
 

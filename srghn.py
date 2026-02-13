@@ -22,6 +22,7 @@ class SRGHN(eqx.Module):
     self_spec: ParamNodeSpec = eqx.field(static=True)
     policy_spec: ParamNodeSpec = eqx.field(static=True)
     clip_params: tuple[float, float] = eqx.field(static=True)
+    freeze_stoch_output_head: bool = eqx.field(static=True)
 
 def _param_offsets(param_sizes: tuple[int, ...]) -> tuple[int, ...]:
     offsets = []

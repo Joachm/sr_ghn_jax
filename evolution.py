@@ -91,6 +91,7 @@ def _init_single(key: jax.random.KeyArray, config, graphs, specs) -> SRGHN:
         self_spec=self_spec,
         policy_spec=policy_spec,
         clip_params=config.clip_params,
+        freeze_stoch_output_head=config.freeze_stoch_output_head,
     )
 
 

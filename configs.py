@@ -17,6 +17,7 @@ class ExperimentConfig:
     gnn_steps_policy: int
     gnn_steps_self: int
     policy_hidden_dims: tuple[int, ...]
+    freeze_stoch_output_head: bool
     stoch_coeff_dim: int
     stoch_max_out: int
     mutation_rate_head_dim: int
@@ -47,6 +48,7 @@ def make_config_cartpole_switch() -> ExperimentConfig:
         gnn_steps_policy=10,
         gnn_steps_self=10,
         policy_hidden_dims=(32,),
+        freeze_stoch_output_head=False,
         stoch_coeff_dim=32,
         stoch_max_out=1024,
         mutation_rate_head_dim=5,
@@ -78,6 +80,7 @@ def make_config_ant_brax() -> ExperimentConfig:
         gnn_steps_policy=10,
         gnn_steps_self=10,
         policy_hidden_dims=(32, 32, 32),
+        freeze_stoch_output_head=False,
         stoch_coeff_dim=32,
         stoch_max_out=1024,
         mutation_rate_head_dim=5,
@@ -106,6 +109,7 @@ def make_config_gymnax_generic(
     episodes_per_eval: int = 1,
     child_factor: float = 0.0,
     policy_hidden_dims: tuple[int, ...] = (32,),
+    freeze_stoch_output_head: bool = False,
 ) -> ExperimentConfig:
     return ExperimentConfig(
         task_name="gymnax_generic",
@@ -120,6 +124,7 @@ def make_config_gymnax_generic(
         gnn_steps_policy=10,
         gnn_steps_self=10,
         policy_hidden_dims=policy_hidden_dims,
+        freeze_stoch_output_head=freeze_stoch_output_head,
         stoch_coeff_dim=32,
         stoch_max_out=1024,
         mutation_rate_head_dim=5,
@@ -149,6 +154,7 @@ def make_config_brax_generic(
     child_factor: float = 0.0,
     brax_backend: str | None = None,
     policy_hidden_dims: tuple[int, ...] = (32, 32, 32),
+    freeze_stoch_output_head: bool = False,
 ) -> ExperimentConfig:
     return ExperimentConfig(
         task_name="brax_generic",
@@ -163,6 +169,7 @@ def make_config_brax_generic(
         gnn_steps_policy=10,
         gnn_steps_self=10,
         policy_hidden_dims=policy_hidden_dims,
+        freeze_stoch_output_head=freeze_stoch_output_head,
         stoch_coeff_dim=32,
         stoch_max_out=1024,
         mutation_rate_head_dim=5,
@@ -191,6 +198,7 @@ def make_config_mujoco_playground_generic(
     episodes_per_eval: int = 1,
     child_factor: float = 0.0,
     policy_hidden_dims: tuple[int, ...] = (32, 32, 32),
+    freeze_stoch_output_head: bool = False,
 ) -> ExperimentConfig:
     return ExperimentConfig(
         task_name="mujoco_playground_generic",
@@ -205,6 +213,7 @@ def make_config_mujoco_playground_generic(
         gnn_steps_policy=10,
         gnn_steps_self=10,
         policy_hidden_dims=policy_hidden_dims,
+        freeze_stoch_output_head=freeze_stoch_output_head,
         stoch_coeff_dim=32,
         stoch_max_out=1024,
         mutation_rate_head_dim=2,
