@@ -22,8 +22,6 @@ class SRGHN(eqx.Module):
     self_spec: ParamNodeSpec = eqx.field(static=True)
     policy_spec: ParamNodeSpec = eqx.field(static=True)
     clip_params: tuple[float, float] = eqx.field(static=True)
-    mutation_scale_alpha: float = eqx.field(static=True)
-    mutation_norm_eps: float = eqx.field(static=True)
 
 def _param_offsets(param_sizes: tuple[int, ...]) -> tuple[int, ...]:
     offsets = []
@@ -95,11 +93,7 @@ def mutate(srghn: SRGHN, key: jax.random.KeyArray) -> SRGHN:
     updates = _assemble_params(out_mat, srghn.self_spec)
     new_leaves = []
     for i, leaf in enumerate(leaves):
-        raw_update = updates[i]
-        param_rms = jnp.sqrt(jnp.mean(jnp.square(leaf)) + srghn.mutation_norm_eps)
-        update_rms = jnp.sqrt(jnp.mean(jnp.square(raw_update)) + srghn.mutation_norm_eps)
-        scaled_update = raw_update * (param_rms / update_rms) * srghn.mutation_scale_alpha
-        new_leaf = leaf + scaled_update
+        new_leaf = leaf + updates[i]
         new_leaf = jnp.clip(new_leaf, srghn.clip_params[0], srghn.clip_params[1])
         new_leaves.append(new_leaf)
 

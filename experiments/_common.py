@@ -68,8 +68,6 @@ def _build_template_srghn(num_self_nodes: int, policy_spec: ParamNodeSpec, confi
         self_spec=ParamNodeSpec((), (), (), 0, 0, (), ()),
         policy_spec=policy_spec,
         clip_params=config.clip_params,
-        mutation_scale_alpha=config.mutation_scale_alpha,
-        mutation_norm_eps=config.mutation_norm_eps,
     )
 
 
