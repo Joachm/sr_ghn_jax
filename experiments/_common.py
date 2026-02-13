@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from evolution import run_jit
-from graphs import GraphSpec, make_chain_graph
+from graphs import GraphSpec, make_chain_graph, make_parallel_shard_graph
 from gnn import GraphEncoder
 from hypernets import DeterministicHead, StochasticHyper
 from specs import ParamNodeSpec, policy_spec_for_task, srghn_self_spec
@@ -94,8 +94,8 @@ def build_graphs_and_specs(config) -> tuple[GraphBundle, SpecBundle]:
         raise ValueError("Self graph size did not stabilize; increase iteration budget.")
 
     graphs = GraphBundle(
-        self_graph=make_chain_graph(self_spec.num_nodes, bidir=True),
-        policy_graph=make_chain_graph(policy_spec.num_nodes, bidir=True),
+        self_graph=make_parallel_shard_graph(self_spec.shard_param_idxs, bidir=True),
+        policy_graph=make_parallel_shard_graph(policy_spec.shard_param_idxs, bidir=True),
     )
     specs = SpecBundle(self_spec=self_spec, policy_spec=policy_spec)
     return graphs, specs

@@ -85,3 +85,58 @@ def make_block_graph(block_ids: tuple[int, ...], bidir: bool = True) -> GraphSpe
     return GraphSpec(src=_to_int32_array(src),
                      dst=_to_int32_array(dst),
                      num_nodes=num_nodes)
+
+
+def make_parallel_shard_graph(shard_super_ids: tuple[int, ...], bidir: bool = True) -> GraphSpec:
+    """Build a shard-aware graph preserving super-node neighborhood structure.
+
+    Each super-node can have one or more shard nodes (parallel siblings):
+    - Siblings are mutually connected.
+    - Adjacent super-nodes in order are connected via full bipartite edges.
+    """
+    num_nodes = len(shard_super_ids)
+    if num_nodes == 0:
+        return GraphSpec(
+            src=jnp.zeros((0,), dtype=jnp.int32),
+            dst=jnp.zeros((0,), dtype=jnp.int32),
+            num_nodes=0,
+        )
+
+    groups: dict[int, list[int]] = {}
+    super_order: list[int] = []
+    for node_idx, super_id in enumerate(shard_super_ids):
+        if super_id not in groups:
+            groups[super_id] = []
+            super_order.append(super_id)
+        groups[super_id].append(node_idx)
+
+    src: list[int] = []
+    dst: list[int] = []
+
+    # Connect shards from the same super-node as siblings.
+    for nodes in groups.values():
+        for i, a in enumerate(nodes):
+            for b in nodes[i + 1 :]:
+                src.append(a)
+                dst.append(b)
+                if bidir:
+                    src.append(b)
+                    dst.append(a)
+
+    # Preserve chain neighborhood at the super-node level.
+    for left_super, right_super in zip(super_order[:-1], super_order[1:]):
+        left_nodes = groups[left_super]
+        right_nodes = groups[right_super]
+        for a in left_nodes:
+            for b in right_nodes:
+                src.append(a)
+                dst.append(b)
+                if bidir:
+                    src.append(b)
+                    dst.append(a)
+
+    return GraphSpec(
+        src=_to_int32_array(src),
+        dst=_to_int32_array(dst),
+        num_nodes=num_nodes,
+    )
