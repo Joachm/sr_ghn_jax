@@ -202,9 +202,7 @@ def policy_spec_for_task(config, shard_size: int) -> ParamNodeSpec:
 
 
 def _srghn_filter_spec(srghn_module: eqx.Module):
-    filter_spec = jax.tree_util.tree_map(eqx.is_array, srghn_module)
-    filter_spec = eqx.tree_at(lambda m: m.stoch.basis, filter_spec, False)
-    return filter_spec
+    return jax.tree_util.tree_map(eqx.is_array, srghn_module)
 
 
 def srghn_self_spec(srghn_module: eqx.Module, shard_size: int) -> ParamNodeSpec:

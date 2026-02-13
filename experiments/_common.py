@@ -46,7 +46,7 @@ def _build_template_srghn(num_self_nodes: int, policy_spec: ParamNodeSpec, confi
         in_dim=config.gnn_hidden_dim,
         hidden_dim=config.gnn_hidden_dim,
         coeff_dim=config.stoch_coeff_dim,
-        max_out=1,
+        max_out=config.stoch_max_out,
         mutation_rate_head_dim=config.mutation_rate_head_dim,
         clip_std=config.clip_std,
         clip_update=config.clip_update,
