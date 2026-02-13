@@ -12,7 +12,7 @@ from graphs import GraphSpec
 from hypernets import DeterministicHead, StochasticHyper
 from metrics import compute_metrics
 from rollout import evaluate_individual
-from srghn import SRGHN, mutate
+from srghn import SRGHN, mutate_with_stats
 from gnn import GraphEncoder
 from specs import ParamNodeSpec
 
@@ -100,6 +100,77 @@ def init_population(key: jax.random.KeyArray, config, graphs, specs) -> SRGHN:
     return eqx.filter_vmap(lambda k: _init_single(k, config, graphs, specs))(keys)
 
 
+def _sumsq_per_individual(module) -> jnp.ndarray:
+    filtered = eqx.filter(module, eqx.is_array)
+    leaves = jax.tree_util.tree_leaves(filtered)
+    if not leaves:
+        return jnp.zeros((0,), dtype=jnp.float32)
+    n = leaves[0].shape[0]
+    out = jnp.zeros((n,), dtype=jnp.float32)
+    for leaf in leaves:
+        axes = tuple(range(1, leaf.ndim))
+        out = out + jnp.sum(jnp.square(leaf), axis=axes)
+    return out
+
+
+def _l2_per_individual(module) -> jnp.ndarray:
+    return jnp.sqrt(jnp.maximum(_sumsq_per_individual(module), 0.0))
+
+
+def _delta_l2_per_individual(parent_module, child_module) -> jnp.ndarray:
+    p = eqx.filter(parent_module, eqx.is_array)
+    c = eqx.filter(child_module, eqx.is_array)
+    p_leaves = jax.tree_util.tree_leaves(p)
+    c_leaves = jax.tree_util.tree_leaves(c)
+    if not p_leaves:
+        return jnp.zeros((0,), dtype=jnp.float32)
+    n = p_leaves[0].shape[0]
+    out = jnp.zeros((n,), dtype=jnp.float32)
+    for p_leaf, c_leaf in zip(p_leaves, c_leaves):
+        delta = c_leaf - p_leaf
+        axes = tuple(range(1, delta.ndim))
+        out = out + jnp.sum(jnp.square(delta), axis=axes)
+    return jnp.sqrt(jnp.maximum(out, 0.0))
+
+
+def _fraction_at_param_bounds(module, low: float, high: float) -> jnp.ndarray:
+    filtered = eqx.filter(module, eqx.is_array)
+    leaves = jax.tree_util.tree_leaves(filtered)
+    if not leaves:
+        return jnp.array(0.0, dtype=jnp.float32)
+    hit_count = jnp.array(0.0, dtype=jnp.float32)
+    total_count = jnp.array(0.0, dtype=jnp.float32)
+    for leaf in leaves:
+        hit = jnp.logical_or(leaf <= low, leaf >= high)
+        hit_count = hit_count + jnp.sum(hit.astype(jnp.float32))
+        total_count = total_count + leaf.size
+    return hit_count / jnp.maximum(total_count, 1.0)
+
+
+def _stack_component_vectors(component) -> jnp.ndarray:
+    filtered = eqx.filter(component, eqx.is_array)
+    leaves = jax.tree_util.tree_leaves(filtered)
+    if not leaves:
+        return jnp.zeros((0, 1), dtype=jnp.float32)
+    n = leaves[0].shape[0]
+    blocks = [leaf.reshape((n, -1)) for leaf in leaves]
+    return jnp.concatenate(blocks, axis=1)
+
+
+def _diversity_from_matrix(x: jnp.ndarray) -> jnp.ndarray:
+    n = x.shape[0]
+    sum_sq = jnp.sum(x * x, axis=1)
+    sum_sq_total = jnp.sum(sum_sq)
+    sum_vec = jnp.sum(x, axis=0)
+    sum_vec_sq = jnp.sum(sum_vec * sum_vec)
+    denom = n * (n - 1)
+    pairwise_sq = 2.0 * (n * sum_sq_total - sum_vec_sq) / jnp.maximum(denom, 1)
+    rms_dist = jnp.sqrt(jnp.maximum(pairwise_sq, 0.0))
+    param_count = jnp.maximum(x.shape[1], 1)
+    scaled = rms_dist / jnp.sqrt(param_count)
+    return jnp.where(denom > 0, scaled, 0.0)
+
+
 def evo_step(state: EvoState, gen: jnp.int32, config) -> tuple[EvoState, dict]:
     key, key_eval, key_children = jax.random.split(state.key, 3)
     def _select_individual(pop, idx):
@@ -114,14 +185,10 @@ def evo_step(state: EvoState, gen: jnp.int32, config) -> tuple[EvoState, dict]:
             return
         if wandb.run is None:
             return
-        wandb.log(
-            {
-                "gen": int(gen_idx),
-                "fitness_mean": float(metrics_dict["fitness_mean"]),
-                "fitness_best": float(metrics_dict["fitness_best"]),
-                "diversity": float(metrics_dict["diversity"]),
-            }
-        )
+        payload = {"gen": int(gen_idx)}
+        for k, v in metrics_dict.items():
+            payload[k] = float(v)
+        wandb.log(payload)
 
     pop_arr, pop_static = eqx.partition(state.pop, eqx.is_array)
     num_children = config.pop_size * config.children_per_parent
@@ -129,7 +196,7 @@ def evo_step(state: EvoState, gen: jnp.int32, config) -> tuple[EvoState, dict]:
     parent_idx = jnp.repeat(jnp.arange(config.pop_size), config.children_per_parent)
     parents_rep_arr = jax.tree_util.tree_map(lambda x: x[parent_idx], pop_arr)
     parents_rep = eqx.combine(parents_rep_arr, pop_static)
-    children = eqx.filter_vmap(mutate)(parents_rep, child_keys)
+    children, child_mut_stats = eqx.filter_vmap(mutate_with_stats)(parents_rep, child_keys)
 
     children_arr, children_static = eqx.partition(children, eqx.is_array)
     all_arr = jax.tree_util.tree_map(lambda p, c: jnp.concatenate([p, c], axis=0), pop_arr, children_arr)
@@ -144,14 +211,59 @@ def evo_step(state: EvoState, gen: jnp.int32, config) -> tuple[EvoState, dict]:
     parent_fitness = all_fitness[: config.pop_size]
     child_fitness = all_fitness[config.pop_size :]
     child_fitness = child_fitness.reshape(config.pop_size, config.children_per_parent)
+    child_mean_per_parent = jnp.mean(child_fitness, axis=1)
     blended_parent = (1.0 - config.child_factor) * parent_fitness + config.child_factor * jnp.mean(
         child_fitness, axis=1
     )
     selection_fitness = jnp.concatenate([blended_parent, child_fitness.reshape(-1)], axis=0)
-    # Log raw environment fitness, not the blended selection fitness.
-    metrics = compute_metrics(state.pop, all_fitness)
-    jax.debug.callback(_wandb_log, metrics, gen)
     select_idx = jnp.argsort(selection_fitness)[-config.pop_size :]
+    selected_fitness = selection_fitness[select_idx]
+
+    mutation_delta_l2 = _delta_l2_per_individual(parents_rep, children)
+    parent_l2 = _l2_per_individual(parents_rep)
+    mutation_delta_rel_l2 = mutation_delta_l2 / jnp.maximum(parent_l2, 1e-8)
+
+    delta_encoder_self_l2 = _delta_l2_per_individual(parents_rep.encoder_self, children.encoder_self)
+    delta_encoder_policy_l2 = _delta_l2_per_individual(parents_rep.encoder_policy, children.encoder_policy)
+    delta_stoch_l2 = _delta_l2_per_individual(parents_rep.stoch, children.stoch)
+    delta_det_l2 = _delta_l2_per_individual(parents_rep.det, children.det)
+
+    pop_param_norms = _l2_per_individual(state.pop)
+    clip_params_fraction = _fraction_at_param_bounds(state.pop, config.clip_params[0], config.clip_params[1])
+    policy_component = (state.pop.policy_node_emb, state.pop.encoder_policy, state.pop.det)
+    self_component = (state.pop.self_node_emb, state.pop.encoder_self, state.pop.stoch)
+    diversity_policy_component = _diversity_from_matrix(_stack_component_vectors(policy_component))
+    diversity_self_component = _diversity_from_matrix(_stack_component_vectors(self_component))
+
+    # Log raw environment fitness, not the blended selection fitness, and add diagnostics.
+    metrics = compute_metrics(state.pop, all_fitness)
+    metrics.update(
+        {
+            "parent_fitness_mean": jnp.mean(parent_fitness),
+            "child_fitness_mean": jnp.mean(child_fitness),
+            "child_parent_delta_mean": jnp.mean(child_mean_per_parent - parent_fitness),
+            "selected_fitness_mean": jnp.mean(selected_fitness),
+            "selection_threshold": jnp.min(selected_fitness),
+            "elite_turnover": jnp.mean((select_idx >= config.pop_size).astype(jnp.float32)),
+            "mutation_delta_l2": jnp.mean(mutation_delta_l2),
+            "mutation_delta_rel_l2": jnp.mean(mutation_delta_rel_l2),
+            "mutation_delta_encoder_self_l2": jnp.mean(delta_encoder_self_l2),
+            "mutation_delta_encoder_policy_l2": jnp.mean(delta_encoder_policy_l2),
+            "mutation_delta_stoch_l2": jnp.mean(delta_stoch_l2),
+            "mutation_delta_det_l2": jnp.mean(delta_det_l2),
+            "lr_mean": jnp.mean(child_mut_stats["lr_mean"]),
+            "lr_std": jnp.mean(child_mut_stats["lr_std"]),
+            "std_head_mean": jnp.mean(child_mut_stats["std_head_mean"]),
+            "std_head_std": jnp.mean(child_mut_stats["std_head_std"]),
+            "update_clip_fraction": jnp.mean(child_mut_stats["update_clip_fraction"]),
+            "param_norm_mean": jnp.mean(pop_param_norms),
+            "param_norm_std": jnp.std(pop_param_norms),
+            "param_clip_fraction": clip_params_fraction,
+            "diversity_policy_component": diversity_policy_component,
+            "diversity_self_component": diversity_self_component,
+        }
+    )
+    jax.debug.callback(_wandb_log, metrics, gen)
     next_arr = jax.tree_util.tree_map(lambda x: x[select_idx], all_arr)
     next_pop = eqx.combine(next_arr, children_static)
 

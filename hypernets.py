@@ -54,8 +54,9 @@ class StochasticHyper(eqx.Module):
         self.clip_update = clip_update
         self.const_noise_std = const_noise_std
 
-    def __call__(self, h_i: jnp.ndarray, out_dim: int, key: jax.random.KeyArray) -> tuple[jnp.ndarray, jnp.ndarray]:
-        """Returns (update_vec[out_dim], mutation_rate_scalar)."""
+    def _sample_update(
+        self, h_i: jnp.ndarray, out_dim: int, key: jax.random.KeyArray
+    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         k_eps, k_noise = jax.random.split(key, 2)
         x = self.trunk(h_i)
         log_std = self.std_head(x)
@@ -71,7 +72,21 @@ class StochasticHyper(eqx.Module):
 
         noise = jax.random.normal(k_noise, w_out.shape) * self.const_noise_std
         update = clipped * lr + noise
-        return update[:out_dim], lr
+        hit_clip = jnp.logical_or(w_out <= self.clip_update[0], w_out >= self.clip_update[1])
+        clip_fraction = jnp.mean(hit_clip.astype(jnp.float32))
+        std_mean = jnp.mean(std)
+        std_std = jnp.std(std)
+        return update[:out_dim], lr, std_mean, std_std, clip_fraction
+
+    def __call__(self, h_i: jnp.ndarray, out_dim: int, key: jax.random.KeyArray) -> tuple[jnp.ndarray, jnp.ndarray]:
+        """Returns (update_vec[out_dim], mutation_rate_scalar)."""
+        update, lr, _, _, _ = self._sample_update(h_i, out_dim, key)
+        return update, lr
+
+    def with_stats(
+        self, h_i: jnp.ndarray, out_dim: int, key: jax.random.KeyArray
+    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+        return self._sample_update(h_i, out_dim, key)
 
 
 class DeterministicHead(eqx.Module):

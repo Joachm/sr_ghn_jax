@@ -103,3 +103,57 @@ def mutate(srghn: SRGHN, key: jax.random.KeyArray) -> SRGHN:
         new_flat[flat_idx] = new_leaves[out_idx]
     new_arr_tree = jax.tree_util.tree_unflatten(treedef, new_flat)
     return eqx.combine(new_arr_tree, static_tree)
+
+
+def mutate_with_stats(srghn: SRGHN, key: jax.random.KeyArray) -> tuple[SRGHN, dict]:
+    h = srghn.encoder_self(srghn.self_node_emb, srghn.self_graph)
+    filter_spec = _srghn_filter_spec(srghn)
+    arr_tree, static_tree = eqx.partition(srghn, filter_spec)
+    flat, treedef = jax.tree_util.tree_flatten(arr_tree)
+    idxs = [i for i, leaf in enumerate(flat) if leaf is not None]
+    leaves = [flat[i] for i in idxs]
+    num_nodes = srghn.self_spec.num_nodes
+    max_size = srghn.self_spec.max_size
+
+    keys = jax.random.split(key, num_nodes)
+
+    def fori_body(i, carry):
+        out_mat, lrs, std_means, std_stds, clip_fracs = carry
+        upd, lr, std_mean, std_std, clip_fraction = srghn.stoch.with_stats(h[i], max_size, keys[i])
+        out_mat = out_mat.at[i].set(upd)
+        lrs = lrs.at[i].set(lr)
+        std_means = std_means.at[i].set(std_mean)
+        std_stds = std_stds.at[i].set(std_std)
+        clip_fracs = clip_fracs.at[i].set(clip_fraction)
+        return out_mat, lrs, std_means, std_stds, clip_fracs
+
+    init = (
+        jnp.zeros((num_nodes, max_size), dtype=h.dtype),
+        jnp.zeros((num_nodes,), dtype=h.dtype),
+        jnp.zeros((num_nodes,), dtype=h.dtype),
+        jnp.zeros((num_nodes,), dtype=h.dtype),
+        jnp.zeros((num_nodes,), dtype=h.dtype),
+    )
+    out_mat, lrs, std_means, std_stds, clip_fracs = jax.lax.fori_loop(0, num_nodes, fori_body, init)
+
+    updates = _assemble_params(out_mat, srghn.self_spec)
+    new_leaves = []
+    for i, leaf in enumerate(leaves):
+        new_leaf = leaf + updates[i]
+        new_leaf = jnp.clip(new_leaf, srghn.clip_params[0], srghn.clip_params[1])
+        new_leaves.append(new_leaf)
+
+    new_flat = list(flat)
+    for out_idx, flat_idx in enumerate(idxs):
+        new_flat[flat_idx] = new_leaves[out_idx]
+    new_arr_tree = jax.tree_util.tree_unflatten(treedef, new_flat)
+    new_srghn = eqx.combine(new_arr_tree, static_tree)
+
+    stats = {
+        "lr_mean": jnp.mean(lrs),
+        "lr_std": jnp.std(lrs),
+        "std_head_mean": jnp.mean(std_means),
+        "std_head_std": jnp.mean(std_stds),
+        "update_clip_fraction": jnp.mean(clip_fracs),
+    }
+    return new_srghn, stats
