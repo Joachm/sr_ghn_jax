@@ -207,11 +207,11 @@ def make_config_mujoco_playground_generic(
     *,
     seed: int = 0,
     pop_size: int = 200,
-    num_generations: int = 20000,
+    num_generations: int = 3000,
     episode_horizon: int = 1000,
     children_per_parent: int = 4,
     episodes_per_eval: int = 1,
-    child_factor: float = 0.0,
+    child_factor: float = 0.5,
     policy_hidden_dims: tuple[int, ...] = (32, 32, 32),
     freeze_stoch_output_head: bool = False,
 ) -> ExperimentConfig:
