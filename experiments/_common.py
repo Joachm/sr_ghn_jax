@@ -48,6 +48,8 @@ def _build_template_srghn(num_self_nodes: int, policy_spec: ParamNodeSpec, confi
         coeff_dim=config.stoch_coeff_dim,
         max_out=config.stoch_max_out,
         mutation_rate_head_dim=config.mutation_rate_head_dim,
+        cov_rank=config.stoch_cov_rank,
+        cov_scale=config.stoch_cov_scale,
         clip_std=config.clip_std,
         clip_update=config.clip_update,
         const_noise_std=config.const_noise_std,

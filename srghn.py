@@ -188,6 +188,16 @@ def make_policy(srghn: SRGHN) -> tuple[jnp.ndarray, ...]:
     return tuple(outputs)
 
 
+def _sample_group_latents(
+    spec: ParamNodeSpec, cov_rank: int, key: jax.random.KeyArray, dtype: jnp.dtype
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    shard_group_idxs = jnp.asarray(spec.shard_param_idxs, dtype=jnp.int32)
+    num_groups = len(spec.param_sizes)
+    if cov_rank <= 0:
+        return shard_group_idxs, jnp.zeros((num_groups, 0), dtype=dtype)
+    return shard_group_idxs, jax.random.normal(key, (num_groups, cov_rank), dtype=dtype)
+
+
 def mutate(srghn: SRGHN, key: jax.random.KeyArray) -> SRGHN:
     h = srghn.encoder_self(srghn.self_node_emb, srghn.self_graph)
     filter_spec = _srghn_filter_spec(srghn)
@@ -198,10 +208,15 @@ def mutate(srghn: SRGHN, key: jax.random.KeyArray) -> SRGHN:
     num_nodes = srghn.self_spec.num_nodes
     max_size = srghn.self_spec.max_size
 
-    keys = jax.random.split(key, num_nodes)
+    key_nodes, key_groups = jax.random.split(key, 2)
+    keys = jax.random.split(key_nodes, num_nodes)
+    shard_group_idxs, group_latents = _sample_group_latents(
+        srghn.self_spec, srghn.stoch.cov_rank, key_groups, h.dtype
+    )
 
     def fori_body(i, out_mat):
-        upd, _ = srghn.stoch(h[i], max_size, keys[i])
+        group_latent = group_latents[shard_group_idxs[i]]
+        upd, _ = srghn.stoch(h[i], max_size, keys[i], group_latent=group_latent)
         return out_mat.at[i].set(upd)
 
     out_mat = jnp.zeros((num_nodes, max_size), dtype=h.dtype)
@@ -232,11 +247,18 @@ def mutate_with_stats(srghn: SRGHN, key: jax.random.KeyArray) -> tuple[SRGHN, di
     num_nodes = srghn.self_spec.num_nodes
     max_size = srghn.self_spec.max_size
 
-    keys = jax.random.split(key, num_nodes)
+    key_nodes, key_groups = jax.random.split(key, 2)
+    keys = jax.random.split(key_nodes, num_nodes)
+    shard_group_idxs, group_latents = _sample_group_latents(
+        srghn.self_spec, srghn.stoch.cov_rank, key_groups, h.dtype
+    )
 
     def fori_body(i, carry):
         out_mat, lrs, std_means, std_stds, clip_fracs = carry
-        upd, lr, std_mean, std_std, clip_fraction = srghn.stoch.with_stats(h[i], max_size, keys[i])
+        group_latent = group_latents[shard_group_idxs[i]]
+        upd, lr, std_mean, std_std, clip_fraction = srghn.stoch.with_stats(
+            h[i], max_size, keys[i], group_latent=group_latent
+        )
         out_mat = out_mat.at[i].set(upd)
         lrs = lrs.at[i].set(lr)
         std_means = std_means.at[i].set(std_mean)
@@ -273,6 +295,9 @@ def mutate_with_stats(srghn: SRGHN, key: jax.random.KeyArray) -> tuple[SRGHN, di
         "std_head_mean": jnp.mean(std_means),
         "std_head_std": jnp.mean(std_stds),
         "update_clip_fraction": jnp.mean(clip_fracs),
+        "self_reg_pre_norm": weight_norm_pre,
+        "self_reg_post_norm": weight_norm_post,
+        "self_reg_scale": weight_norm_scale,
         "weight_norm_pre": weight_norm_pre,
         "weight_norm_post": weight_norm_post,
         "weight_norm_scale": weight_norm_scale,

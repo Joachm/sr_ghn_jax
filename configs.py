@@ -20,6 +20,8 @@ class ExperimentConfig:
     freeze_stoch_output_head: bool
     stoch_coeff_dim: int
     stoch_max_out: int
+    stoch_cov_rank: int
+    stoch_cov_scale: float
     mutation_rate_head_dim: int
     clip_params: tuple[float, float]
     self_reg_mode: str
@@ -56,6 +58,8 @@ def make_config_cartpole_switch() -> ExperimentConfig:
         freeze_stoch_output_head=False,
         stoch_coeff_dim=32,
         stoch_max_out=1024,
+        stoch_cov_rank=0,
+        stoch_cov_scale=0.1,
         mutation_rate_head_dim=5,
         clip_params=(-20.0, 20.0),
         self_reg_mode="weight_norm",
@@ -93,6 +97,8 @@ def make_config_ant_brax() -> ExperimentConfig:
         freeze_stoch_output_head=False,
         stoch_coeff_dim=32,
         stoch_max_out=1024,
+        stoch_cov_rank=0,
+        stoch_cov_scale=0.1,
         mutation_rate_head_dim=5,
         clip_params=(-20.0, 20.0),
         self_reg_mode="weight_norm",
@@ -127,6 +133,8 @@ def make_config_gymnax_generic(
     freeze_stoch_output_head: bool = False,
     self_reg_mode: str = "weight_norm",
     self_weight_decay: float = 0.001,
+    stoch_cov_rank: int = 0,
+    stoch_cov_scale: float = 0.1,
 ) -> ExperimentConfig:
     return ExperimentConfig(
         task_name="gymnax_generic",
@@ -144,6 +152,8 @@ def make_config_gymnax_generic(
         freeze_stoch_output_head=freeze_stoch_output_head,
         stoch_coeff_dim=32,
         stoch_max_out=1024,
+        stoch_cov_rank=stoch_cov_rank,
+        stoch_cov_scale=stoch_cov_scale,
         mutation_rate_head_dim=5,
         clip_params=(-20.0, 20.0),
         self_reg_mode=self_reg_mode,
@@ -179,6 +189,8 @@ def make_config_brax_generic(
     freeze_stoch_output_head: bool = False,
     self_reg_mode: str = "weight_norm",
     self_weight_decay: float = 0.001,
+    stoch_cov_rank: int = 0,
+    stoch_cov_scale: float = 0.1,
 ) -> ExperimentConfig:
     return ExperimentConfig(
         task_name="brax_generic",
@@ -196,6 +208,8 @@ def make_config_brax_generic(
         freeze_stoch_output_head=freeze_stoch_output_head,
         stoch_coeff_dim=32,
         stoch_max_out=1024,
+        stoch_cov_rank=stoch_cov_rank,
+        stoch_cov_scale=stoch_cov_scale,
         mutation_rate_head_dim=5,
         clip_params=(-20.0, 20.0),
         self_reg_mode=self_reg_mode,
@@ -230,6 +244,8 @@ def make_config_mujoco_playground_generic(
     freeze_stoch_output_head: bool = False,
     self_reg_mode: str = "weight_norm",
     self_weight_decay: float = 0.001,
+    stoch_cov_rank: int = 0,
+    stoch_cov_scale: float = 0.1,
 ) -> ExperimentConfig:
     return ExperimentConfig(
         task_name="mujoco_playground_generic",
@@ -247,6 +263,8 @@ def make_config_mujoco_playground_generic(
         freeze_stoch_output_head=freeze_stoch_output_head,
         stoch_coeff_dim=32,
         stoch_max_out=1024,
+        stoch_cov_rank=stoch_cov_rank,
+        stoch_cov_scale=stoch_cov_scale,
         mutation_rate_head_dim=2,
         clip_params=(-20.0, 20.0),
         self_reg_mode=self_reg_mode,

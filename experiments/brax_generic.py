@@ -50,6 +50,18 @@ def main():
         default=None,
         help="Weight decay factor used when --self-reg-mode=weight_decay.",
     )
+    parser.add_argument(
+        "--stoch-cov-rank",
+        type=int,
+        default=None,
+        help="Low-rank covariance rank for correlated mutation exploration (0 disables).",
+    )
+    parser.add_argument(
+        "--stoch-cov-scale",
+        type=float,
+        default=None,
+        help="Scale applied to low-rank correlated mutation component.",
+    )
     args = parser.parse_args()
 
     config_kwargs = {
@@ -75,6 +87,10 @@ def main():
         config_kwargs["self_reg_mode"] = args.self_reg_mode
     if args.self_weight_decay is not None:
         config_kwargs["self_weight_decay"] = args.self_weight_decay
+    if args.stoch_cov_rank is not None:
+        config_kwargs["stoch_cov_rank"] = args.stoch_cov_rank
+    if args.stoch_cov_scale is not None:
+        config_kwargs["stoch_cov_scale"] = args.stoch_cov_scale
 
     config = make_config_brax_generic(args.env_id, **config_kwargs)
     run_experiment(config)
