@@ -22,6 +22,8 @@ class SRGHN(eqx.Module):
     self_spec: ParamNodeSpec = eqx.field(static=True)
     policy_spec: ParamNodeSpec = eqx.field(static=True)
     clip_params: tuple[float, float] = eqx.field(static=True)
+    self_reg_mode: str = eqx.field(static=True)
+    self_weight_decay: float = eqx.field(static=True)
     self_weight_norm_mode: str = eqx.field(static=True)
     self_weight_norm_target: float | None = eqx.field(static=True)
     self_weight_norm_eps: float = eqx.field(static=True)
@@ -68,6 +70,13 @@ def _global_l2_norm(leaves: list[jnp.ndarray]) -> jnp.ndarray:
 
 def _leaf_l2_norm(leaf: jnp.ndarray) -> jnp.ndarray:
     return jnp.sqrt(jnp.maximum(jnp.sum(jnp.square(leaf)), 0.0))
+
+
+def _mean_leaf_l2_norm(leaves: list[jnp.ndarray]) -> jnp.ndarray:
+    if not leaves:
+        return jnp.array(0.0, dtype=jnp.float32)
+    norms = [_leaf_l2_norm(leaf) for leaf in leaves]
+    return jnp.mean(jnp.stack(norms))
 
 
 def _normalize_leaves_global_l2(
@@ -130,6 +139,39 @@ def _normalize_leaves(
     raise ValueError(f"Unknown self weight normalization mode: {mode}")
 
 
+def _decay_leaves(
+    leaves: list[jnp.ndarray], decay: float
+) -> tuple[list[jnp.ndarray], jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    keep = jnp.clip(1.0 - jnp.asarray(decay, dtype=jnp.float32), 0.0, 1.0)
+    pre_norm = _mean_leaf_l2_norm(leaves)
+    decayed = [leaf * keep for leaf in leaves]
+    post_norm = _mean_leaf_l2_norm(decayed)
+    return decayed, pre_norm, post_norm, keep
+
+
+def _identity_regularization(leaves: list[jnp.ndarray]) -> tuple[list[jnp.ndarray], jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    pre_norm = _mean_leaf_l2_norm(leaves)
+    scale = jnp.array(1.0, dtype=pre_norm.dtype)
+    return leaves, pre_norm, pre_norm, scale
+
+
+def _regularize_leaves(srghn: SRGHN, leaves: list[jnp.ndarray]) -> tuple[list[jnp.ndarray], jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    if srghn.self_reg_mode == "weight_norm":
+        return _normalize_leaves(
+            leaves,
+            srghn.self_weight_norm_mode,
+            srghn.self_weight_norm_target,
+            srghn.self_weight_norm_eps,
+        )
+    if srghn.self_reg_mode == "weight_decay":
+        if srghn.self_weight_decay < 0.0 or srghn.self_weight_decay > 1.0:
+            raise ValueError("self_weight_decay must be in [0, 1].")
+        return _decay_leaves(leaves, srghn.self_weight_decay)
+    if srghn.self_reg_mode == "none":
+        return _identity_regularization(leaves)
+    raise ValueError(f"Unknown self regularization mode: {srghn.self_reg_mode}")
+
+
 def make_policy(srghn: SRGHN) -> tuple[jnp.ndarray, ...]:
     h = srghn.encoder_policy(srghn.policy_node_emb, srghn.policy_graph)
     num_nodes = srghn.policy_spec.num_nodes
@@ -171,12 +213,7 @@ def mutate(srghn: SRGHN, key: jax.random.KeyArray) -> SRGHN:
         new_leaf = leaf + updates[i]
         new_leaf = jnp.clip(new_leaf, srghn.clip_params[0], srghn.clip_params[1])
         new_leaves.append(new_leaf)
-    new_leaves, _, _, _ = _normalize_leaves(
-        new_leaves,
-        srghn.self_weight_norm_mode,
-        srghn.self_weight_norm_target,
-        srghn.self_weight_norm_eps,
-    )
+    new_leaves, _, _, _ = _regularize_leaves(srghn, new_leaves)
 
     new_flat = list(flat)
     for out_idx, flat_idx in enumerate(idxs):
@@ -222,12 +259,7 @@ def mutate_with_stats(srghn: SRGHN, key: jax.random.KeyArray) -> tuple[SRGHN, di
         new_leaf = leaf + updates[i]
         new_leaf = jnp.clip(new_leaf, srghn.clip_params[0], srghn.clip_params[1])
         new_leaves.append(new_leaf)
-    new_leaves, weight_norm_pre, weight_norm_post, weight_norm_scale = _normalize_leaves(
-        new_leaves,
-        srghn.self_weight_norm_mode,
-        srghn.self_weight_norm_target,
-        srghn.self_weight_norm_eps,
-    )
+    new_leaves, weight_norm_pre, weight_norm_post, weight_norm_scale = _regularize_leaves(srghn, new_leaves)
 
     new_flat = list(flat)
     for out_idx, flat_idx in enumerate(idxs):

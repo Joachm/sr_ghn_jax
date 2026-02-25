@@ -38,6 +38,18 @@ def main():
         default=None,
         help="Freeze/unfreeze stochastic output basis (use --freeze-stoch-output-head or --no-freeze-stoch-output-head).",
     )
+    parser.add_argument(
+        "--self-reg-mode",
+        choices=("weight_norm", "weight_decay", "none"),
+        default=None,
+        help="Self-regularization mode for SRGHN mutation.",
+    )
+    parser.add_argument(
+        "--self-weight-decay",
+        type=float,
+        default=None,
+        help="Weight decay factor used when --self-reg-mode=weight_decay.",
+    )
     args = parser.parse_args()
 
     config_kwargs = {
@@ -59,6 +71,10 @@ def main():
         config_kwargs["policy_hidden_dims"] = args.policy_hidden_dims
     if args.freeze_stoch_output_head is not None:
         config_kwargs["freeze_stoch_output_head"] = args.freeze_stoch_output_head
+    if args.self_reg_mode is not None:
+        config_kwargs["self_reg_mode"] = args.self_reg_mode
+    if args.self_weight_decay is not None:
+        config_kwargs["self_weight_decay"] = args.self_weight_decay
 
     config = make_config_brax_generic(args.env_id, **config_kwargs)
     run_experiment(config)

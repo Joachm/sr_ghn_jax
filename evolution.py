@@ -91,6 +91,8 @@ def _init_single(key: jax.random.KeyArray, config, graphs, specs) -> SRGHN:
         self_spec=self_spec,
         policy_spec=policy_spec,
         clip_params=config.clip_params,
+        self_reg_mode=config.self_reg_mode,
+        self_weight_decay=config.self_weight_decay,
         self_weight_norm_mode=config.self_weight_norm_mode,
         self_weight_norm_target=config.self_weight_norm_target,
         self_weight_norm_eps=config.self_weight_norm_eps,

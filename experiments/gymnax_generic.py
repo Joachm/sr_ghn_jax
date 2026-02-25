@@ -33,6 +33,18 @@ def main():
         default=None,
         help="Freeze/unfreeze stochastic output basis (use --freeze-stoch-output-head or --no-freeze-stoch-output-head).",
     )
+    parser.add_argument(
+        "--self-reg-mode",
+        choices=("weight_norm", "weight_decay", "none"),
+        default=None,
+        help="Self-regularization mode for SRGHN mutation.",
+    )
+    parser.add_argument(
+        "--self-weight-decay",
+        type=float,
+        default=None,
+        help="Weight decay factor used when --self-reg-mode=weight_decay.",
+    )
     args = parser.parse_args()
 
     config = make_config_gymnax_generic(
@@ -48,6 +60,13 @@ def main():
             False if args.freeze_stoch_output_head is None else args.freeze_stoch_output_head
         ),
     )
+    overrides = {}
+    if args.self_reg_mode is not None:
+        overrides["self_reg_mode"] = args.self_reg_mode
+    if args.self_weight_decay is not None:
+        overrides["self_weight_decay"] = args.self_weight_decay
+    if overrides:
+        config = config.__class__(**{**config.__dict__, **overrides})
     run_experiment(config)
 
 

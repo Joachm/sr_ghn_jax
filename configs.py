@@ -22,6 +22,8 @@ class ExperimentConfig:
     stoch_max_out: int
     mutation_rate_head_dim: int
     clip_params: tuple[float, float]
+    self_reg_mode: str
+    self_weight_decay: float
     self_weight_norm_mode: str
     self_weight_norm_target: float | None
     self_weight_norm_eps: float
@@ -56,6 +58,8 @@ def make_config_cartpole_switch() -> ExperimentConfig:
         stoch_max_out=1024,
         mutation_rate_head_dim=5,
         clip_params=(-20.0, 20.0),
+        self_reg_mode="weight_norm",
+        self_weight_decay=0.001,
         self_weight_norm_mode="per_layer",
         self_weight_norm_target=150.0,
         self_weight_norm_eps=1e-8,
@@ -91,6 +95,8 @@ def make_config_ant_brax() -> ExperimentConfig:
         stoch_max_out=1024,
         mutation_rate_head_dim=5,
         clip_params=(-20.0, 20.0),
+        self_reg_mode="weight_norm",
+        self_weight_decay=0.001,
         self_weight_norm_mode="per_layer",
         self_weight_norm_target=150.0,
         self_weight_norm_eps=1e-8,
@@ -119,6 +125,8 @@ def make_config_gymnax_generic(
     child_factor: float = 0.0,
     policy_hidden_dims: tuple[int, ...] = (32,),
     freeze_stoch_output_head: bool = False,
+    self_reg_mode: str = "weight_norm",
+    self_weight_decay: float = 0.001,
 ) -> ExperimentConfig:
     return ExperimentConfig(
         task_name="gymnax_generic",
@@ -138,6 +146,8 @@ def make_config_gymnax_generic(
         stoch_max_out=1024,
         mutation_rate_head_dim=5,
         clip_params=(-20.0, 20.0),
+        self_reg_mode=self_reg_mode,
+        self_weight_decay=self_weight_decay,
         self_weight_norm_mode="per_layer",
         self_weight_norm_target=150.0,
         self_weight_norm_eps=1e-8,
@@ -167,6 +177,8 @@ def make_config_brax_generic(
     brax_backend: str | None = None,
     policy_hidden_dims: tuple[int, ...] = (32, 32, 32),
     freeze_stoch_output_head: bool = False,
+    self_reg_mode: str = "weight_norm",
+    self_weight_decay: float = 0.001,
 ) -> ExperimentConfig:
     return ExperimentConfig(
         task_name="brax_generic",
@@ -186,6 +198,8 @@ def make_config_brax_generic(
         stoch_max_out=1024,
         mutation_rate_head_dim=5,
         clip_params=(-20.0, 20.0),
+        self_reg_mode=self_reg_mode,
+        self_weight_decay=self_weight_decay,
         self_weight_norm_mode="per_layer",
         self_weight_norm_target=150.0,
         self_weight_norm_eps=1e-8,
@@ -214,6 +228,8 @@ def make_config_mujoco_playground_generic(
     child_factor: float = 0.5,
     policy_hidden_dims: tuple[int, ...] = (32, 32, 32),
     freeze_stoch_output_head: bool = False,
+    self_reg_mode: str = "weight_norm",
+    self_weight_decay: float = 0.001,
 ) -> ExperimentConfig:
     return ExperimentConfig(
         task_name="mujoco_playground_generic",
@@ -233,6 +249,8 @@ def make_config_mujoco_playground_generic(
         stoch_max_out=1024,
         mutation_rate_head_dim=2,
         clip_params=(-20.0, 20.0),
+        self_reg_mode=self_reg_mode,
+        self_weight_decay=self_weight_decay,
         self_weight_norm_mode="per_layer",
         self_weight_norm_target=150.0,
         self_weight_norm_eps=1e-8,
