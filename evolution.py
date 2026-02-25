@@ -91,6 +91,9 @@ def _init_single(key: jax.random.KeyArray, config, graphs, specs) -> SRGHN:
         self_spec=self_spec,
         policy_spec=policy_spec,
         clip_params=config.clip_params,
+        self_weight_norm_mode=config.self_weight_norm_mode,
+        self_weight_norm_target=config.self_weight_norm_target,
+        self_weight_norm_eps=config.self_weight_norm_eps,
         freeze_stoch_output_head=config.freeze_stoch_output_head,
     )
 
@@ -256,6 +259,9 @@ def evo_step(state: EvoState, gen: jnp.int32, config) -> tuple[EvoState, dict]:
             "std_head_mean": jnp.mean(child_mut_stats["std_head_mean"]),
             "std_head_std": jnp.mean(child_mut_stats["std_head_std"]),
             "update_clip_fraction": jnp.mean(child_mut_stats["update_clip_fraction"]),
+            "weight_norm_pre": jnp.mean(child_mut_stats["weight_norm_pre"]),
+            "weight_norm_post": jnp.mean(child_mut_stats["weight_norm_post"]),
+            "weight_norm_scale": jnp.mean(child_mut_stats["weight_norm_scale"]),
             "param_norm_mean": jnp.mean(pop_param_norms),
             "param_norm_std": jnp.std(pop_param_norms),
             "param_clip_fraction": clip_params_fraction,

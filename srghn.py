@@ -22,6 +22,9 @@ class SRGHN(eqx.Module):
     self_spec: ParamNodeSpec = eqx.field(static=True)
     policy_spec: ParamNodeSpec = eqx.field(static=True)
     clip_params: tuple[float, float] = eqx.field(static=True)
+    self_weight_norm_mode: str = eqx.field(static=True)
+    self_weight_norm_target: float | None = eqx.field(static=True)
+    self_weight_norm_eps: float = eqx.field(static=True)
     freeze_stoch_output_head: bool = eqx.field(static=True)
 
 def _param_offsets(param_sizes: tuple[int, ...]) -> tuple[int, ...]:
@@ -54,6 +57,77 @@ def _assemble_params(out_mat: jnp.ndarray, spec: ParamNodeSpec) -> list[jnp.ndar
         vec = flat[start : start + size]
         outputs.append(vec.reshape(shape))
     return outputs
+
+
+def _global_l2_norm(leaves: list[jnp.ndarray]) -> jnp.ndarray:
+    sq_sum = jnp.array(0.0, dtype=jnp.float32)
+    for leaf in leaves:
+        sq_sum = sq_sum + jnp.sum(jnp.square(leaf))
+    return jnp.sqrt(jnp.maximum(sq_sum, 0.0))
+
+
+def _leaf_l2_norm(leaf: jnp.ndarray) -> jnp.ndarray:
+    return jnp.sqrt(jnp.maximum(jnp.sum(jnp.square(leaf)), 0.0))
+
+
+def _normalize_leaves_global_l2(
+    leaves: list[jnp.ndarray], target_norm: float | None, eps: float
+) -> tuple[list[jnp.ndarray], jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    pre_norm = _global_l2_norm(leaves)
+    if target_norm is None:
+        return leaves, pre_norm, pre_norm, jnp.array(1.0, dtype=pre_norm.dtype)
+
+    target = jnp.asarray(target_norm, dtype=pre_norm.dtype)
+    scale = jnp.minimum(1.0, target / jnp.maximum(pre_norm, eps))
+    normalized = [leaf * scale for leaf in leaves]
+    post_norm = _global_l2_norm(normalized)
+    return normalized, pre_norm, post_norm, scale
+
+
+def _normalize_leaves_per_layer_l2(
+    leaves: list[jnp.ndarray], target_norm: float | None, eps: float
+) -> tuple[list[jnp.ndarray], jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    if not leaves:
+        zero = jnp.array(0.0, dtype=jnp.float32)
+        one = jnp.array(1.0, dtype=jnp.float32)
+        return leaves, zero, zero, one
+
+    pre_norms = []
+    post_norms = []
+    scales = []
+    normalized = []
+
+    for leaf in leaves:
+        pre = _leaf_l2_norm(leaf)
+        if target_norm is None:
+            scale = jnp.array(1.0, dtype=pre.dtype)
+        else:
+            target = jnp.asarray(target_norm, dtype=pre.dtype)
+            scale = jnp.minimum(1.0, target / jnp.maximum(pre, eps))
+        out = leaf * scale
+        post = _leaf_l2_norm(out)
+
+        pre_norms.append(pre)
+        post_norms.append(post)
+        scales.append(scale)
+        normalized.append(out)
+
+    return (
+        normalized,
+        jnp.mean(jnp.stack(pre_norms)),
+        jnp.mean(jnp.stack(post_norms)),
+        jnp.mean(jnp.stack(scales)),
+    )
+
+
+def _normalize_leaves(
+    leaves: list[jnp.ndarray], mode: str, target_norm: float | None, eps: float
+) -> tuple[list[jnp.ndarray], jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    if mode == "global":
+        return _normalize_leaves_global_l2(leaves, target_norm, eps)
+    if mode == "per_layer":
+        return _normalize_leaves_per_layer_l2(leaves, target_norm, eps)
+    raise ValueError(f"Unknown self weight normalization mode: {mode}")
 
 
 def make_policy(srghn: SRGHN) -> tuple[jnp.ndarray, ...]:
@@ -97,6 +171,12 @@ def mutate(srghn: SRGHN, key: jax.random.KeyArray) -> SRGHN:
         new_leaf = leaf + updates[i]
         new_leaf = jnp.clip(new_leaf, srghn.clip_params[0], srghn.clip_params[1])
         new_leaves.append(new_leaf)
+    new_leaves, _, _, _ = _normalize_leaves(
+        new_leaves,
+        srghn.self_weight_norm_mode,
+        srghn.self_weight_norm_target,
+        srghn.self_weight_norm_eps,
+    )
 
     new_flat = list(flat)
     for out_idx, flat_idx in enumerate(idxs):
@@ -142,6 +222,12 @@ def mutate_with_stats(srghn: SRGHN, key: jax.random.KeyArray) -> tuple[SRGHN, di
         new_leaf = leaf + updates[i]
         new_leaf = jnp.clip(new_leaf, srghn.clip_params[0], srghn.clip_params[1])
         new_leaves.append(new_leaf)
+    new_leaves, weight_norm_pre, weight_norm_post, weight_norm_scale = _normalize_leaves(
+        new_leaves,
+        srghn.self_weight_norm_mode,
+        srghn.self_weight_norm_target,
+        srghn.self_weight_norm_eps,
+    )
 
     new_flat = list(flat)
     for out_idx, flat_idx in enumerate(idxs):
@@ -155,5 +241,8 @@ def mutate_with_stats(srghn: SRGHN, key: jax.random.KeyArray) -> tuple[SRGHN, di
         "std_head_mean": jnp.mean(std_means),
         "std_head_std": jnp.mean(std_stds),
         "update_clip_fraction": jnp.mean(clip_fracs),
+        "weight_norm_pre": weight_norm_pre,
+        "weight_norm_post": weight_norm_post,
+        "weight_norm_scale": weight_norm_scale,
     }
     return new_srghn, stats

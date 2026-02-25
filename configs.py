@@ -22,6 +22,9 @@ class ExperimentConfig:
     stoch_max_out: int
     mutation_rate_head_dim: int
     clip_params: tuple[float, float]
+    self_weight_norm_mode: str
+    self_weight_norm_target: float | None
+    self_weight_norm_eps: float
     clip_std: tuple[float, float]
     clip_update: tuple[float, float]
     const_noise_std: float
@@ -53,6 +56,9 @@ def make_config_cartpole_switch() -> ExperimentConfig:
         stoch_max_out=1024,
         mutation_rate_head_dim=5,
         clip_params=(-20.0, 20.0),
+        self_weight_norm_mode="per_layer",
+        self_weight_norm_target=150.0,
+        self_weight_norm_eps=1e-8,
         clip_std=(0.0, 2.0),
         clip_update=(-1.0, 1.0),
         const_noise_std=0.001,
@@ -85,6 +91,9 @@ def make_config_ant_brax() -> ExperimentConfig:
         stoch_max_out=1024,
         mutation_rate_head_dim=5,
         clip_params=(-20.0, 20.0),
+        self_weight_norm_mode="per_layer",
+        self_weight_norm_target=150.0,
+        self_weight_norm_eps=1e-8,
         clip_std=(0.0, 2.0),
         clip_update=(-.1, .1),
         const_noise_std=0.001,
@@ -129,6 +138,9 @@ def make_config_gymnax_generic(
         stoch_max_out=1024,
         mutation_rate_head_dim=5,
         clip_params=(-20.0, 20.0),
+        self_weight_norm_mode="per_layer",
+        self_weight_norm_target=150.0,
+        self_weight_norm_eps=1e-8,
         clip_std=(0.0, 2.0),
         clip_update=(-1.0, 1.0),
         const_noise_std=0.001,
@@ -174,6 +186,9 @@ def make_config_brax_generic(
         stoch_max_out=1024,
         mutation_rate_head_dim=5,
         clip_params=(-20.0, 20.0),
+        self_weight_norm_mode="per_layer",
+        self_weight_norm_target=150.0,
+        self_weight_norm_eps=1e-8,
         clip_std=(0.0, 2.0),
         clip_update=(-0.1, 0.1),
         const_noise_std=0.001,
@@ -218,6 +233,9 @@ def make_config_mujoco_playground_generic(
         stoch_max_out=1024,
         mutation_rate_head_dim=2,
         clip_params=(-20.0, 20.0),
+        self_weight_norm_mode="per_layer",
+        self_weight_norm_target=150.0,
+        self_weight_norm_eps=1e-8,
         clip_std=(0.0, 2.0),
         clip_update=(-0.1, 0.1),
         const_noise_std=0.001,
