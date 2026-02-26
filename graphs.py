@@ -87,12 +87,23 @@ def make_block_graph(block_ids: tuple[int, ...], bidir: bool = True) -> GraphSpe
                      num_nodes=num_nodes)
 
 
-def make_parallel_shard_graph(shard_super_ids: tuple[int, ...], bidir: bool = True) -> GraphSpec:
+def make_parallel_shard_graph(
+    shard_super_ids: tuple[int, ...],
+    bidir: bool = True,
+    mode: str = "dense",
+) -> GraphSpec:
     """Build a shard-aware graph preserving super-node neighborhood structure.
 
     Each super-node can have one or more shard nodes (parallel siblings):
-    - Siblings are mutually connected.
-    - Adjacent super-nodes in order are connected via full bipartite edges.
+    - ``mode='dense'``:
+      - Siblings are mutually connected (clique).
+      - Adjacent super-nodes in order are connected via full bipartite edges.
+    - ``mode='sibling_chain'``:
+      - Siblings are connected as an in-order chain.
+      - Adjacent super-nodes are connected by a single bridge edge.
+    - ``mode='hub'``:
+      - Siblings are connected to a single hub node (first shard in the group).
+      - Adjacent super-nodes are connected by a single bridge edge.
     """
     num_nodes = len(shard_super_ids)
     if num_nodes == 0:
@@ -113,27 +124,74 @@ def make_parallel_shard_graph(shard_super_ids: tuple[int, ...], bidir: bool = Tr
     src: list[int] = []
     dst: list[int] = []
 
-    # Connect shards from the same super-node as siblings.
-    for nodes in groups.values():
-        for i, a in enumerate(nodes):
-            for b in nodes[i + 1 :]:
-                src.append(a)
-                dst.append(b)
-                if bidir:
-                    src.append(b)
-                    dst.append(a)
+    if mode == "dense":
+        # Connect shards from the same super-node as siblings.
+        for nodes in groups.values():
+            for i, a in enumerate(nodes):
+                for b in nodes[i + 1 :]:
+                    src.append(a)
+                    dst.append(b)
+                    if bidir:
+                        src.append(b)
+                        dst.append(a)
 
-    # Preserve chain neighborhood at the super-node level.
-    for left_super, right_super in zip(super_order[:-1], super_order[1:]):
-        left_nodes = groups[left_super]
-        right_nodes = groups[right_super]
-        for a in left_nodes:
-            for b in right_nodes:
-                src.append(a)
-                dst.append(b)
+        # Preserve chain neighborhood at the super-node level.
+        for left_super, right_super in zip(super_order[:-1], super_order[1:]):
+            left_nodes = groups[left_super]
+            right_nodes = groups[right_super]
+            for a in left_nodes:
+                for b in right_nodes:
+                    src.append(a)
+                    dst.append(b)
+                    if bidir:
+                        src.append(b)
+                        dst.append(a)
+    elif mode == "sibling_chain":
+        for nodes in groups.values():
+            for left_node, right_node in zip(nodes[:-1], nodes[1:]):
+                src.append(left_node)
+                dst.append(right_node)
                 if bidir:
-                    src.append(b)
-                    dst.append(a)
+                    src.append(right_node)
+                    dst.append(left_node)
+
+        for left_super, right_super in zip(super_order[:-1], super_order[1:]):
+            left_nodes = groups[left_super]
+            right_nodes = groups[right_super]
+            left_node = left_nodes[-1]
+            right_node = right_nodes[0]
+            src.append(left_node)
+            dst.append(right_node)
+            if bidir:
+                src.append(right_node)
+                dst.append(left_node)
+    elif mode == "hub":
+        for nodes in groups.values():
+            if len(nodes) <= 1:
+                continue
+            hub_node = nodes[0]
+            for node in nodes[1:]:
+                src.append(hub_node)
+                dst.append(node)
+                if bidir:
+                    src.append(node)
+                    dst.append(hub_node)
+
+        for left_super, right_super in zip(super_order[:-1], super_order[1:]):
+            left_nodes = groups[left_super]
+            right_nodes = groups[right_super]
+            left_node = left_nodes[-1]
+            right_node = right_nodes[0]
+            src.append(left_node)
+            dst.append(right_node)
+            if bidir:
+                src.append(right_node)
+                dst.append(left_node)
+    else:
+        raise ValueError(
+            f"Unknown shard graph mode: {mode!r}. "
+            "Expected one of: 'dense', 'sibling_chain', 'hub'."
+        )
 
     return GraphSpec(
         src=_to_int32_array(src),

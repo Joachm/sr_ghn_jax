@@ -75,19 +75,27 @@ class StochasticHyper(eqx.Module):
         out_dim: int,
         key: jax.random.KeyArray,
         group_latent: jnp.ndarray | None = None,
+        forced_std: jnp.ndarray | None = None,
+        forced_lr: jnp.ndarray | None = None,
     ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         k_eps, k_noise, k_cov = jax.random.split(key, 3)
         x = self.trunk(h_i)
-        log_std = self.std_head(x)
-        std = jnp.clip(jnp.exp(log_std), self.clip_std[0], self.clip_std[1])
+        if forced_std is None:
+            log_std = self.std_head(x)
+            std = jnp.clip(jnp.exp(log_std), self.clip_std[0], self.clip_std[1])
+        else:
+            std = jnp.clip(jnp.asarray(forced_std, dtype=x.dtype), self.clip_std[0], self.clip_std[1])
 
         coeffs = jax.random.normal(k_eps, std.shape) * std
 
         w_out = coeffs @ self.basis
         clipped = jnp.clip(w_out, self.clip_update[0], self.clip_update[1])
 
-        lr_logits = self.lr_head(x)
-        lr = jnp.max(jax.nn.sigmoid(lr_logits))
+        if forced_lr is None:
+            lr_logits = self.lr_head(x)
+            lr = jnp.max(jax.nn.sigmoid(lr_logits))
+        else:
+            lr = jnp.clip(jnp.asarray(forced_lr, dtype=x.dtype), 0.0, 1.0)
 
         noise = jax.random.normal(k_noise, w_out.shape) * self.const_noise_std
         update_preclip = clipped * lr + noise
@@ -116,9 +124,18 @@ class StochasticHyper(eqx.Module):
         out_dim: int,
         key: jax.random.KeyArray,
         group_latent: jnp.ndarray | None = None,
+        forced_std: jnp.ndarray | None = None,
+        forced_lr: jnp.ndarray | None = None,
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Returns (update_vec[out_dim], mutation_rate_scalar)."""
-        update, lr, _, _, _ = self._sample_update(h_i, out_dim, key, group_latent=group_latent)
+        update, lr, _, _, _ = self._sample_update(
+            h_i,
+            out_dim,
+            key,
+            group_latent=group_latent,
+            forced_std=forced_std,
+            forced_lr=forced_lr,
+        )
         return update, lr
 
     def with_stats(
@@ -127,8 +144,27 @@ class StochasticHyper(eqx.Module):
         out_dim: int,
         key: jax.random.KeyArray,
         group_latent: jnp.ndarray | None = None,
+        forced_std: jnp.ndarray | None = None,
+        forced_lr: jnp.ndarray | None = None,
     ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-        return self._sample_update(h_i, out_dim, key, group_latent=group_latent)
+        return self._sample_update(
+            h_i,
+            out_dim,
+            key,
+            group_latent=group_latent,
+            forced_std=forced_std,
+            forced_lr=forced_lr,
+        )
+
+    def scales_from_hidden(
+        self, h_i: jnp.ndarray
+    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+        x = self.trunk(h_i)
+        log_std = self.std_head(x)
+        std = jnp.clip(jnp.exp(log_std), self.clip_std[0], self.clip_std[1])
+        lr_logits = self.lr_head(x)
+        lr = jnp.max(jax.nn.sigmoid(lr_logits))
+        return std, lr, jnp.mean(std), jnp.std(std)
 
 
 class DeterministicHead(eqx.Module):

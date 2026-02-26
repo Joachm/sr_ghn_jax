@@ -19,7 +19,10 @@ class ExperimentConfig:
     policy_hidden_dims: tuple[int, ...]
     freeze_stoch_output_head: bool
     stoch_coeff_dim: int
-    stoch_max_out: int
+    policy_head_max_out: int | None
+    self_shard_size: int
+    shard_graph_mode: str
+    shard_residual_scale: float
     stoch_cov_rank: int
     stoch_cov_scale: float
     mutation_rate_head_dim: int
@@ -57,7 +60,10 @@ def make_config_cartpole_switch() -> ExperimentConfig:
         policy_hidden_dims=(32,),
         freeze_stoch_output_head=False,
         stoch_coeff_dim=32,
-        stoch_max_out=1024,
+        policy_head_max_out=None,
+        self_shard_size=1024,
+        shard_graph_mode="sibling_chain",
+        shard_residual_scale=0.25,
         stoch_cov_rank=0,
         stoch_cov_scale=0.1,
         mutation_rate_head_dim=5,
@@ -96,7 +102,10 @@ def make_config_ant_brax() -> ExperimentConfig:
         policy_hidden_dims=(32, 32, 32),
         freeze_stoch_output_head=False,
         stoch_coeff_dim=32,
-        stoch_max_out=1024,
+        policy_head_max_out=None,
+        self_shard_size=1024,
+        shard_graph_mode="sibling_chain",
+        shard_residual_scale=0.25,
         stoch_cov_rank=0,
         stoch_cov_scale=0.1,
         mutation_rate_head_dim=5,
@@ -133,6 +142,10 @@ def make_config_gymnax_generic(
     freeze_stoch_output_head: bool = False,
     self_reg_mode: str = "weight_norm",
     self_weight_decay: float = 0.001,
+    policy_head_max_out: int | None = None,
+    self_shard_size: int = 1024,
+    shard_graph_mode: str = "sibling_chain",
+    shard_residual_scale: float = 0.25,
     stoch_cov_rank: int = 0,
     stoch_cov_scale: float = 0.1,
 ) -> ExperimentConfig:
@@ -151,7 +164,10 @@ def make_config_gymnax_generic(
         policy_hidden_dims=policy_hidden_dims,
         freeze_stoch_output_head=freeze_stoch_output_head,
         stoch_coeff_dim=32,
-        stoch_max_out=1024,
+        policy_head_max_out=policy_head_max_out,
+        self_shard_size=self_shard_size,
+        shard_graph_mode=shard_graph_mode,
+        shard_residual_scale=shard_residual_scale,
         stoch_cov_rank=stoch_cov_rank,
         stoch_cov_scale=stoch_cov_scale,
         mutation_rate_head_dim=5,
@@ -189,6 +205,10 @@ def make_config_brax_generic(
     freeze_stoch_output_head: bool = False,
     self_reg_mode: str = "weight_norm",
     self_weight_decay: float = 0.001,
+    policy_head_max_out: int | None = None,
+    self_shard_size: int = 1024,
+    shard_graph_mode: str = "sibling_chain",
+    shard_residual_scale: float = 0.25,
     stoch_cov_rank: int = 0,
     stoch_cov_scale: float = 0.1,
 ) -> ExperimentConfig:
@@ -207,7 +227,10 @@ def make_config_brax_generic(
         policy_hidden_dims=policy_hidden_dims,
         freeze_stoch_output_head=freeze_stoch_output_head,
         stoch_coeff_dim=32,
-        stoch_max_out=1024,
+        policy_head_max_out=policy_head_max_out,
+        self_shard_size=self_shard_size,
+        shard_graph_mode=shard_graph_mode,
+        shard_residual_scale=shard_residual_scale,
         stoch_cov_rank=stoch_cov_rank,
         stoch_cov_scale=stoch_cov_scale,
         mutation_rate_head_dim=5,
@@ -244,6 +267,10 @@ def make_config_mujoco_playground_generic(
     freeze_stoch_output_head: bool = False,
     self_reg_mode: str = "weight_norm",
     self_weight_decay: float = 0.001,
+    policy_head_max_out: int | None = None,
+    self_shard_size: int = 1024,
+    shard_graph_mode: str = "sibling_chain",
+    shard_residual_scale: float = 0.25,
     stoch_cov_rank: int = 0,
     stoch_cov_scale: float = 0.1,
 ) -> ExperimentConfig:
@@ -262,7 +289,10 @@ def make_config_mujoco_playground_generic(
         policy_hidden_dims=policy_hidden_dims,
         freeze_stoch_output_head=freeze_stoch_output_head,
         stoch_coeff_dim=32,
-        stoch_max_out=1024,
+        policy_head_max_out=policy_head_max_out,
+        self_shard_size=self_shard_size,
+        shard_graph_mode=shard_graph_mode,
+        shard_residual_scale=shard_residual_scale,
         stoch_cov_rank=stoch_cov_rank,
         stoch_cov_scale=stoch_cov_scale,
         mutation_rate_head_dim=2,

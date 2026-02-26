@@ -57,6 +57,30 @@ def main():
         default=None,
         help="Scale applied to low-rank correlated mutation component.",
     )
+    parser.add_argument(
+        "--policy-head-max-out",
+        type=int,
+        default=None,
+        help="Optional deterministic policy-head output width cap/floor (must be >= max policy leaf).",
+    )
+    parser.add_argument(
+        "--self-shard-size",
+        type=int,
+        default=None,
+        help="Shard size used for self-mutation stochastic head output.",
+    )
+    parser.add_argument(
+        "--shard-graph-mode",
+        choices=("dense", "sibling_chain", "hub"),
+        default=None,
+        help="Shard graph topology: dense clique+bipartite, sibling_chain, or hub.",
+    )
+    parser.add_argument(
+        "--shard-residual-scale",
+        type=float,
+        default=None,
+        help="Residual blend scale in group+residual updates (delta = group + scale * residual).",
+    )
     args = parser.parse_args()
 
     config = make_config_gymnax_generic(
@@ -71,6 +95,10 @@ def main():
         freeze_stoch_output_head=(
             False if args.freeze_stoch_output_head is None else args.freeze_stoch_output_head
         ),
+        policy_head_max_out=args.policy_head_max_out,
+        self_shard_size=(1024 if args.self_shard_size is None else args.self_shard_size),
+        shard_graph_mode=("sibling_chain" if args.shard_graph_mode is None else args.shard_graph_mode),
+        shard_residual_scale=(0.25 if args.shard_residual_scale is None else args.shard_residual_scale),
     )
     overrides = {}
     if args.self_reg_mode is not None:

@@ -154,7 +154,20 @@ def _make_sharded_spec(shapes: tuple[tuple[int, ...], ...], shard_size: int) -> 
     )
 
 
-def policy_spec_for_task(config, shard_size: int) -> ParamNodeSpec:
+def _make_unsharded_spec(shapes: tuple[tuple[int, ...], ...]) -> ParamNodeSpec:
+    param_sizes = _sizes_from_shapes(shapes)
+    return ParamNodeSpec(
+        shapes=shapes,
+        param_sizes=param_sizes,
+        sizes=param_sizes,
+        max_size=max(param_sizes) if param_sizes else 0,
+        num_nodes=len(param_sizes),
+        shard_param_idxs=tuple(range(len(param_sizes))),
+        shard_starts=tuple(0 for _ in param_sizes),
+    )
+
+
+def policy_spec_for_task(config, shard_size: int | None = None) -> ParamNodeSpec:
     task = config.task_name.lower()
     hidden_dims = tuple(int(x) for x in config.policy_hidden_dims)
     if task == "cartpole_switch":
@@ -199,6 +212,8 @@ def policy_spec_for_task(config, shard_size: int) -> ParamNodeSpec:
     else:
         raise ValueError(f"Unknown task_name: {config.task_name}")
 
+    if shard_size is None:
+        return _make_unsharded_spec(shapes)
     return _make_sharded_spec(shapes, shard_size)
 
 

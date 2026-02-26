@@ -5,3 +5,4 @@ gymnax
 brax
 wandb
 mujoco-playground
+pillow

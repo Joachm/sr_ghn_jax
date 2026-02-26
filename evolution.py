@@ -79,7 +79,15 @@ def _init_single(key: jax.random.KeyArray, config, graphs, specs) -> SRGHN:
         key=k_stoch,
     )
 
-    det = DeterministicHead(config.gnn_hidden_dim, policy_spec.max_size, key=k_det)
+    policy_head_out = policy_spec.max_size if config.policy_head_max_out is None else int(config.policy_head_max_out)
+    if policy_head_out < policy_spec.max_size:
+        raise ValueError(
+            "policy_head_max_out must be at least the largest policy parameter size "
+            f"({policy_spec.max_size}), got {policy_head_out}."
+        )
+    if float(config.shard_residual_scale) < 0.0:
+        raise ValueError("shard_residual_scale must be non-negative.")
+    det = DeterministicHead(config.gnn_hidden_dim, policy_head_out, key=k_det)
 
     return SRGHN(
         self_node_emb=self_node_emb,
@@ -98,6 +106,7 @@ def _init_single(key: jax.random.KeyArray, config, graphs, specs) -> SRGHN:
         self_weight_norm_mode=config.self_weight_norm_mode,
         self_weight_norm_target=config.self_weight_norm_target,
         self_weight_norm_eps=config.self_weight_norm_eps,
+        shard_residual_scale=config.shard_residual_scale,
         freeze_stoch_output_head=config.freeze_stoch_output_head,
     )
 
@@ -178,6 +187,27 @@ def _diversity_from_matrix(x: jnp.ndarray) -> jnp.ndarray:
     return jnp.where(denom > 0, scaled, 0.0)
 
 
+def _percentiles_10_50_90(x: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    flat = x.reshape((-1,))
+    if flat.shape[0] == 0:
+        zero = jnp.array(0.0, dtype=jnp.float32)
+        return zero, zero, zero
+    sorted_x = jnp.sort(flat)
+    n = sorted_x.shape[0]
+    i10 = int(round(0.10 * (n - 1)))
+    i50 = int(round(0.50 * (n - 1)))
+    i90 = int(round(0.90 * (n - 1)))
+    return sorted_x[i10], sorted_x[i50], sorted_x[i90]
+
+
+def _masked_mean(x: jnp.ndarray, mask: jnp.ndarray) -> jnp.ndarray:
+    x = jnp.asarray(x)
+    mask = jnp.asarray(mask, dtype=jnp.bool_)
+    count = jnp.sum(mask.astype(x.dtype))
+    total = jnp.sum(jnp.where(mask, x, jnp.zeros_like(x)))
+    return jnp.where(count > 0, total / count, jnp.array(0.0, dtype=x.dtype))
+
+
 def evo_step(state: EvoState, gen: jnp.int32, config) -> tuple[EvoState, dict]:
     key, key_eval, key_children = jax.random.split(state.key, 3)
     def _select_individual(pop, idx):
@@ -218,6 +248,7 @@ def evo_step(state: EvoState, gen: jnp.int32, config) -> tuple[EvoState, dict]:
     parent_fitness = all_fitness[: config.pop_size]
     child_fitness = all_fitness[config.pop_size :]
     child_fitness = child_fitness.reshape(config.pop_size, config.children_per_parent)
+    child_fitness_flat = child_fitness.reshape(-1)
     child_mean_per_parent = jnp.mean(child_fitness, axis=1)
     blended_parent = (1.0 - config.child_factor) * parent_fitness + config.child_factor * jnp.mean(
         child_fitness, axis=1
@@ -225,6 +256,14 @@ def evo_step(state: EvoState, gen: jnp.int32, config) -> tuple[EvoState, dict]:
     selection_fitness = jnp.concatenate([blended_parent, child_fitness.reshape(-1)], axis=0)
     select_idx = jnp.argsort(selection_fitness)[-config.pop_size :]
     selected_fitness = selection_fitness[select_idx]
+    selected_is_child = select_idx >= config.pop_size
+    selected_child_idx = jnp.clip(select_idx - config.pop_size, 0, num_children - 1)
+    selected_child_counts = jnp.zeros((num_children,), dtype=jnp.int32).at[selected_child_idx].add(
+        selected_is_child.astype(jnp.int32)
+    )
+    selected_child_mask = selected_child_counts > 0
+    rejected_child_mask = jnp.logical_not(selected_child_mask)
+    selected_child_fraction = jnp.mean(selected_child_mask.astype(jnp.float32))
 
     mutation_delta_l2 = _delta_l2_per_individual(parents_rep, children)
     parent_l2 = _l2_per_individual(parents_rep)
@@ -234,6 +273,26 @@ def evo_step(state: EvoState, gen: jnp.int32, config) -> tuple[EvoState, dict]:
     delta_encoder_policy_l2 = _delta_l2_per_individual(parents_rep.encoder_policy, children.encoder_policy)
     delta_stoch_l2 = _delta_l2_per_individual(parents_rep.stoch, children.stoch)
     delta_det_l2 = _delta_l2_per_individual(parents_rep.det, children.det)
+    parent_encoder_self_l2 = _l2_per_individual(parents_rep.encoder_self)
+    parent_encoder_policy_l2 = _l2_per_individual(parents_rep.encoder_policy)
+    parent_stoch_l2 = _l2_per_individual(parents_rep.stoch)
+    parent_det_l2 = _l2_per_individual(parents_rep.det)
+    delta_encoder_self_rel_l2 = delta_encoder_self_l2 / jnp.maximum(parent_encoder_self_l2, 1e-8)
+    delta_encoder_policy_rel_l2 = delta_encoder_policy_l2 / jnp.maximum(parent_encoder_policy_l2, 1e-8)
+    delta_stoch_rel_l2 = delta_stoch_l2 / jnp.maximum(parent_stoch_l2, 1e-8)
+    delta_det_rel_l2 = delta_det_l2 / jnp.maximum(parent_det_l2, 1e-8)
+
+    child_lr = child_mut_stats["lr_mean"]
+    child_std = child_mut_stats["std_head_mean"]
+    child_sibling_cos = child_mut_stats["shard_sibling_cosine_mean"]
+    child_residual_ratio = child_mut_stats["residual_to_group_norm"]
+    child_assembled_norm_per_shard = child_mut_stats["assembled_update_norm_per_shard_mean"]
+    lr_p10, lr_p50, lr_p90 = _percentiles_10_50_90(child_lr)
+    std_p10, std_p50, std_p90 = _percentiles_10_50_90(child_std)
+    lr_low_frac = jnp.mean((child_lr < 0.05).astype(jnp.float32))
+    lr_high_frac = jnp.mean((child_lr > 0.95).astype(jnp.float32))
+
+    child_fitness_delta = child_fitness_flat - parent_fitness[parent_idx]
 
     pop_param_norms = _l2_per_individual(state.pop)
     clip_params_fraction = _fraction_at_param_bounds(state.pop, config.clip_params[0], config.clip_params[1])
@@ -258,11 +317,51 @@ def evo_step(state: EvoState, gen: jnp.int32, config) -> tuple[EvoState, dict]:
             "mutation_delta_encoder_policy_l2": jnp.mean(delta_encoder_policy_l2),
             "mutation_delta_stoch_l2": jnp.mean(delta_stoch_l2),
             "mutation_delta_det_l2": jnp.mean(delta_det_l2),
+            "mutation_delta_encoder_self_rel_l2": jnp.mean(delta_encoder_self_rel_l2),
+            "mutation_delta_encoder_policy_rel_l2": jnp.mean(delta_encoder_policy_rel_l2),
+            "mutation_delta_stoch_rel_l2": jnp.mean(delta_stoch_rel_l2),
+            "mutation_delta_det_rel_l2": jnp.mean(delta_det_rel_l2),
             "lr_mean": jnp.mean(child_mut_stats["lr_mean"]),
             "lr_std": jnp.mean(child_mut_stats["lr_std"]),
+            "lr_p10": lr_p10,
+            "lr_p50": lr_p50,
+            "lr_p90": lr_p90,
+            "lr_low_frac": lr_low_frac,
+            "lr_high_frac": lr_high_frac,
             "std_head_mean": jnp.mean(child_mut_stats["std_head_mean"]),
             "std_head_std": jnp.mean(child_mut_stats["std_head_std"]),
+            "std_head_mean_p10": std_p10,
+            "std_head_mean_p50": std_p50,
+            "std_head_mean_p90": std_p90,
             "update_clip_fraction": jnp.mean(child_mut_stats["update_clip_fraction"]),
+            "local_update_clip_fraction": jnp.mean(child_mut_stats["local_update_clip_fraction"]),
+            "group_update_clip_fraction": jnp.mean(child_mut_stats["group_update_clip_fraction"]),
+            "shard_sibling_cosine_mean": jnp.mean(child_mut_stats["shard_sibling_cosine_mean"]),
+            "assembled_update_norm_mean": jnp.mean(child_mut_stats["assembled_update_norm_mean"]),
+            "assembled_update_norm_per_shard_mean": jnp.mean(
+                child_mut_stats["assembled_update_norm_per_shard_mean"]
+            ),
+            "assembled_update_norm_shard_corr": jnp.mean(child_mut_stats["assembled_update_norm_shard_corr"]),
+            "group_base_norm_mean": jnp.mean(child_mut_stats["group_base_norm_mean"]),
+            "residual_norm_mean": jnp.mean(child_mut_stats["residual_norm_mean"]),
+            "residual_to_group_norm": jnp.mean(child_mut_stats["residual_to_group_norm"]),
+            "selected_child_fraction": selected_child_fraction,
+            "selected_child_lr_mean": _masked_mean(child_lr, selected_child_mask),
+            "rejected_child_lr_mean": _masked_mean(child_lr, rejected_child_mask),
+            "selected_child_std_mean": _masked_mean(child_std, selected_child_mask),
+            "rejected_child_std_mean": _masked_mean(child_std, rejected_child_mask),
+            "selected_child_sibling_cosine_mean": _masked_mean(child_sibling_cos, selected_child_mask),
+            "rejected_child_sibling_cosine_mean": _masked_mean(child_sibling_cos, rejected_child_mask),
+            "selected_child_residual_to_group_norm": _masked_mean(child_residual_ratio, selected_child_mask),
+            "rejected_child_residual_to_group_norm": _masked_mean(child_residual_ratio, rejected_child_mask),
+            "selected_child_assembled_norm_per_shard_mean": _masked_mean(
+                child_assembled_norm_per_shard, selected_child_mask
+            ),
+            "rejected_child_assembled_norm_per_shard_mean": _masked_mean(
+                child_assembled_norm_per_shard, rejected_child_mask
+            ),
+            "selected_child_fitness_delta_mean": _masked_mean(child_fitness_delta, selected_child_mask),
+            "rejected_child_fitness_delta_mean": _masked_mean(child_fitness_delta, rejected_child_mask),
             "self_reg_pre_norm": jnp.mean(child_mut_stats["self_reg_pre_norm"]),
             "self_reg_post_norm": jnp.mean(child_mut_stats["self_reg_post_norm"]),
             "self_reg_scale": jnp.mean(child_mut_stats["self_reg_scale"]),
