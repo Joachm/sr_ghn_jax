@@ -48,8 +48,18 @@ def _build_template_srghn(
     self_node_emb = jax.random.normal(k_self_emb, (num_self_nodes, config.embedding_dim))
     policy_node_emb = jax.random.normal(k_policy_emb, (policy_spec.num_nodes, config.embedding_dim))
 
-    encoder_self = GraphEncoder(config.gnn_hidden_dim, config.gnn_steps_self, key=k_enc_self)
-    encoder_policy = GraphEncoder(config.gnn_hidden_dim, config.gnn_steps_policy, key=k_enc_pol)
+    encoder_self = GraphEncoder(
+        config.gnn_hidden_dim,
+        config.gnn_steps_self,
+        aggregation=config.gnn_aggregation,
+        key=k_enc_self,
+    )
+    encoder_policy = GraphEncoder(
+        config.gnn_hidden_dim,
+        config.gnn_steps_policy,
+        aggregation=config.gnn_aggregation,
+        key=k_enc_pol,
+    )
 
     stoch = StochasticHyper(
         in_dim=config.gnn_hidden_dim,
@@ -84,6 +94,7 @@ def _build_template_srghn(
         self_weight_norm_mode=config.self_weight_norm_mode,
         self_weight_norm_target=config.self_weight_norm_target,
         self_weight_norm_eps=config.self_weight_norm_eps,
+        self_update_mode=config.self_update_mode,
         shard_residual_scale=config.shard_residual_scale,
         freeze_stoch_output_head=config.freeze_stoch_output_head,
     )
@@ -103,6 +114,11 @@ def build_graphs_and_specs(config) -> tuple[GraphBundle, SpecBundle]:
         raise ValueError("self_shard_size must be positive.")
     if float(config.shard_residual_scale) < 0.0:
         raise ValueError("shard_residual_scale must be non-negative.")
+    if str(config.self_update_mode) not in ("local", "group_residual"):
+        raise ValueError(
+            f"Invalid self_update_mode={config.self_update_mode!r}. "
+            "Expected one of ('local', 'group_residual')."
+        )
     shard_graph_mode = str(getattr(config, "shard_graph_mode", "dense"))
     valid_shard_graph_modes = ("dense", "sibling_chain", "hub")
     if shard_graph_mode not in valid_shard_graph_modes:

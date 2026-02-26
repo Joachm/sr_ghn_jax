@@ -27,6 +27,7 @@ class SRGHN(eqx.Module):
     self_weight_norm_mode: str = eqx.field(static=True)
     self_weight_norm_target: float | None = eqx.field(static=True)
     self_weight_norm_eps: float = eqx.field(static=True)
+    self_update_mode: str = eqx.field(static=True)
     shard_residual_scale: float = eqx.field(static=True)
     freeze_stoch_output_head: bool = eqx.field(static=True)
 
@@ -264,52 +265,66 @@ def mutate(srghn: SRGHN, key: jax.random.KeyArray) -> SRGHN:
     leaves = [flat[i] for i in idxs]
     num_nodes = srghn.self_spec.num_nodes
     max_size = srghn.self_spec.max_size
+    if srghn.self_update_mode == "local":
+        local_keys = jax.random.split(key, num_nodes)
 
-    key_local, key_group, key_cov = jax.random.split(key, 3)
-    shard_group_idxs, group_counts = _group_counts(srghn.self_spec, h.dtype)
-    num_groups = len(srghn.self_spec.param_sizes)
-    local_keys = jax.random.split(key_local, num_nodes)
-    group_keys = jax.random.split(key_group, num_groups)
-    _, group_latents = _sample_group_latents(srghn.self_spec, srghn.stoch.cov_rank, key_cov, h.dtype)
+        def local_body(i, out_mat):
+            upd, _ = srghn.stoch(h[i], max_size, local_keys[i])
+            return out_mat.at[i].set(upd)
 
-    group_h_sum = jnp.zeros((num_groups, h.shape[-1]), dtype=h.dtype).at[shard_group_idxs].add(h)
-    group_h = group_h_sum / jnp.maximum(group_counts[:, None], 1.0)
-    group_stds, group_lrs, _, _ = jax.vmap(srghn.stoch.scales_from_hidden)(group_h)
+        out_mat = jnp.zeros((num_nodes, max_size), dtype=h.dtype)
+        out_mat = jax.lax.fori_loop(0, num_nodes, local_body, out_mat)
+    elif srghn.self_update_mode == "group_residual":
+        key_local, key_group, key_cov = jax.random.split(key, 3)
+        shard_group_idxs, group_counts = _group_counts(srghn.self_spec, h.dtype)
+        num_groups = len(srghn.self_spec.param_sizes)
+        local_keys = jax.random.split(key_local, num_nodes)
+        group_keys = jax.random.split(key_group, num_groups)
+        _, group_latents = _sample_group_latents(srghn.self_spec, srghn.stoch.cov_rank, key_cov, h.dtype)
 
-    def local_body(i, out_mat):
-        group_idx = shard_group_idxs[i]
-        upd, _ = srghn.stoch(
-            h[i],
-            max_size,
-            local_keys[i],
-            group_latent=group_latents[group_idx],
-            forced_std=group_stds[group_idx],
-            forced_lr=group_lrs[group_idx],
+        group_h_sum = jnp.zeros((num_groups, h.shape[-1]), dtype=h.dtype).at[shard_group_idxs].add(h)
+        group_h = group_h_sum / jnp.maximum(group_counts[:, None], 1.0)
+        group_stds, group_lrs, _, _ = jax.vmap(srghn.stoch.scales_from_hidden)(group_h)
+
+        def local_body(i, out_mat):
+            group_idx = shard_group_idxs[i]
+            upd, _ = srghn.stoch(
+                h[i],
+                max_size,
+                local_keys[i],
+                group_latent=group_latents[group_idx],
+                forced_std=group_stds[group_idx],
+                forced_lr=group_lrs[group_idx],
+            )
+            return out_mat.at[i].set(upd)
+
+        local_mat = jnp.zeros((num_nodes, max_size), dtype=h.dtype)
+        local_mat = jax.lax.fori_loop(0, num_nodes, local_body, local_mat)
+
+        def group_body(group_idx, out_mat):
+            upd, _ = srghn.stoch(
+                group_h[group_idx],
+                max_size,
+                group_keys[group_idx],
+                group_latent=group_latents[group_idx],
+                forced_std=group_stds[group_idx],
+                forced_lr=group_lrs[group_idx],
+            )
+            return out_mat.at[group_idx].set(upd)
+
+        group_mat = jnp.zeros((num_groups, max_size), dtype=h.dtype)
+        group_mat = jax.lax.fori_loop(0, num_groups, group_body, group_mat)
+
+        group_local_sum = jnp.zeros((num_groups, max_size), dtype=h.dtype).at[shard_group_idxs].add(local_mat)
+        group_local_mean = group_local_sum / jnp.maximum(group_counts[:, None], 1.0)
+        residual_mat = local_mat - group_local_mean[shard_group_idxs]
+        out_preclip = group_mat[shard_group_idxs] + srghn.shard_residual_scale * residual_mat
+        out_mat = jnp.clip(out_preclip, srghn.stoch.clip_update[0], srghn.stoch.clip_update[1])
+    else:
+        raise ValueError(
+            f"Unknown self_update_mode: {srghn.self_update_mode!r}. "
+            "Expected one of: 'local', 'group_residual'."
         )
-        return out_mat.at[i].set(upd)
-
-    local_mat = jnp.zeros((num_nodes, max_size), dtype=h.dtype)
-    local_mat = jax.lax.fori_loop(0, num_nodes, local_body, local_mat)
-
-    def group_body(group_idx, out_mat):
-        upd, _ = srghn.stoch(
-            group_h[group_idx],
-            max_size,
-            group_keys[group_idx],
-            group_latent=group_latents[group_idx],
-            forced_std=group_stds[group_idx],
-            forced_lr=group_lrs[group_idx],
-        )
-        return out_mat.at[group_idx].set(upd)
-
-    group_mat = jnp.zeros((num_groups, max_size), dtype=h.dtype)
-    group_mat = jax.lax.fori_loop(0, num_groups, group_body, group_mat)
-
-    group_local_sum = jnp.zeros((num_groups, max_size), dtype=h.dtype).at[shard_group_idxs].add(local_mat)
-    group_local_mean = group_local_sum / jnp.maximum(group_counts[:, None], 1.0)
-    residual_mat = local_mat - group_local_mean[shard_group_idxs]
-    out_preclip = group_mat[shard_group_idxs] + srghn.shard_residual_scale * residual_mat
-    out_mat = jnp.clip(out_preclip, srghn.stoch.clip_update[0], srghn.stoch.clip_update[1])
 
     updates = _assemble_params(out_mat, srghn.self_spec)
     new_leaves = []
@@ -335,71 +350,117 @@ def mutate_with_stats(srghn: SRGHN, key: jax.random.KeyArray) -> tuple[SRGHN, di
     leaves = [flat[i] for i in idxs]
     num_nodes = srghn.self_spec.num_nodes
     max_size = srghn.self_spec.max_size
-
-    key_local, key_group, key_cov = jax.random.split(key, 3)
     shard_group_idxs, group_counts = _group_counts(srghn.self_spec, h.dtype)
     num_groups = len(srghn.self_spec.param_sizes)
-    local_keys = jax.random.split(key_local, num_nodes)
-    group_keys = jax.random.split(key_group, num_groups)
-    _, group_latents = _sample_group_latents(srghn.self_spec, srghn.stoch.cov_rank, key_cov, h.dtype)
+    if srghn.self_update_mode == "local":
+        local_keys = jax.random.split(key, num_nodes)
 
-    group_h_sum = jnp.zeros((num_groups, h.shape[-1]), dtype=h.dtype).at[shard_group_idxs].add(h)
-    group_h = group_h_sum / jnp.maximum(group_counts[:, None], 1.0)
-    group_stds, group_lrs, group_std_means, group_std_stds = jax.vmap(srghn.stoch.scales_from_hidden)(group_h)
+        def local_body(i, carry):
+            out_mat, clip_fracs, lrs, std_means, std_stds = carry
+            upd, lr, std_mean, std_std, clip_fraction = srghn.stoch.with_stats(h[i], max_size, local_keys[i])
+            out_mat = out_mat.at[i].set(upd)
+            clip_fracs = clip_fracs.at[i].set(clip_fraction)
+            lrs = lrs.at[i].set(lr)
+            std_means = std_means.at[i].set(std_mean)
+            std_stds = std_stds.at[i].set(std_std)
+            return out_mat, clip_fracs, lrs, std_means, std_stds
 
-    def local_body(i, carry):
-        out_mat, clip_fracs = carry
-        group_idx = shard_group_idxs[i]
-        upd, _, _, _, clip_fraction = srghn.stoch.with_stats(
-            h[i],
-            max_size,
-            local_keys[i],
-            group_latent=group_latents[group_idx],
-            forced_std=group_stds[group_idx],
-            forced_lr=group_lrs[group_idx],
+        local_init = (
+            jnp.zeros((num_nodes, max_size), dtype=h.dtype),
+            jnp.zeros((num_nodes,), dtype=h.dtype),
+            jnp.zeros((num_nodes,), dtype=h.dtype),
+            jnp.zeros((num_nodes,), dtype=h.dtype),
+            jnp.zeros((num_nodes,), dtype=h.dtype),
         )
-        out_mat = out_mat.at[i].set(upd)
-        clip_fracs = clip_fracs.at[i].set(clip_fraction)
-        return out_mat, clip_fracs
-
-    local_init = (
-        jnp.zeros((num_nodes, max_size), dtype=h.dtype),
-        jnp.zeros((num_nodes,), dtype=h.dtype),
-    )
-    local_mat, local_clip_fracs = jax.lax.fori_loop(0, num_nodes, local_body, local_init)
-
-    def group_body(group_idx, carry):
-        out_mat, clip_fracs = carry
-        upd, _, _, _, clip_fraction = srghn.stoch.with_stats(
-            group_h[group_idx],
-            max_size,
-            group_keys[group_idx],
-            group_latent=group_latents[group_idx],
-            forced_std=group_stds[group_idx],
-            forced_lr=group_lrs[group_idx],
+        out_mat, local_clip_fracs, lrs, std_means, std_stds = jax.lax.fori_loop(
+            0, num_nodes, local_body, local_init
         )
-        out_mat = out_mat.at[group_idx].set(upd)
-        clip_fracs = clip_fracs.at[group_idx].set(clip_fraction)
-        return out_mat, clip_fracs
+        group_clip_fracs = local_clip_fracs
+        final_hit_clip = jnp.logical_or(
+            out_mat <= srghn.stoch.clip_update[0], out_mat >= srghn.stoch.clip_update[1]
+        )
+        final_clip_fracs = jnp.mean(final_hit_clip.astype(h.dtype), axis=1)
+        group_base_norm_mean = jnp.mean(
+            jnp.sqrt(jnp.maximum(jnp.sum(jnp.square(out_mat), axis=1), 0.0))
+        )
+        residual_mat = jnp.zeros_like(out_mat)
+        residual_norm_mean = jnp.array(0.0, dtype=h.dtype)
+        residual_to_group_norm = jnp.array(0.0, dtype=h.dtype)
+    elif srghn.self_update_mode == "group_residual":
+        key_local, key_group, key_cov = jax.random.split(key, 3)
+        local_keys = jax.random.split(key_local, num_nodes)
+        group_keys = jax.random.split(key_group, num_groups)
+        _, group_latents = _sample_group_latents(srghn.self_spec, srghn.stoch.cov_rank, key_cov, h.dtype)
 
-    group_init = (
-        jnp.zeros((num_groups, max_size), dtype=h.dtype),
-        jnp.zeros((num_groups,), dtype=h.dtype),
-    )
-    group_mat, group_clip_fracs = jax.lax.fori_loop(0, num_groups, group_body, group_init)
+        group_h_sum = jnp.zeros((num_groups, h.shape[-1]), dtype=h.dtype).at[shard_group_idxs].add(h)
+        group_h = group_h_sum / jnp.maximum(group_counts[:, None], 1.0)
+        group_stds, group_lrs, group_std_means, group_std_stds = jax.vmap(srghn.stoch.scales_from_hidden)(group_h)
 
-    group_local_sum = jnp.zeros((num_groups, max_size), dtype=h.dtype).at[shard_group_idxs].add(local_mat)
-    group_local_mean = group_local_sum / jnp.maximum(group_counts[:, None], 1.0)
-    residual_mat = local_mat - group_local_mean[shard_group_idxs]
-    out_preclip = group_mat[shard_group_idxs] + srghn.shard_residual_scale * residual_mat
-    out_mat = jnp.clip(out_preclip, srghn.stoch.clip_update[0], srghn.stoch.clip_update[1])
-    final_hit_clip = jnp.logical_or(
-        out_preclip <= srghn.stoch.clip_update[0], out_preclip >= srghn.stoch.clip_update[1]
-    )
-    final_clip_fracs = jnp.mean(final_hit_clip.astype(h.dtype), axis=1)
-    lrs = group_lrs[shard_group_idxs]
-    std_means = group_std_means[shard_group_idxs]
-    std_stds = group_std_stds[shard_group_idxs]
+        def local_body(i, carry):
+            out_mat, clip_fracs = carry
+            group_idx = shard_group_idxs[i]
+            upd, _, _, _, clip_fraction = srghn.stoch.with_stats(
+                h[i],
+                max_size,
+                local_keys[i],
+                group_latent=group_latents[group_idx],
+                forced_std=group_stds[group_idx],
+                forced_lr=group_lrs[group_idx],
+            )
+            out_mat = out_mat.at[i].set(upd)
+            clip_fracs = clip_fracs.at[i].set(clip_fraction)
+            return out_mat, clip_fracs
+
+        local_init = (
+            jnp.zeros((num_nodes, max_size), dtype=h.dtype),
+            jnp.zeros((num_nodes,), dtype=h.dtype),
+        )
+        local_mat, local_clip_fracs = jax.lax.fori_loop(0, num_nodes, local_body, local_init)
+
+        def group_body(group_idx, carry):
+            out_mat, clip_fracs = carry
+            upd, _, _, _, clip_fraction = srghn.stoch.with_stats(
+                group_h[group_idx],
+                max_size,
+                group_keys[group_idx],
+                group_latent=group_latents[group_idx],
+                forced_std=group_stds[group_idx],
+                forced_lr=group_lrs[group_idx],
+            )
+            out_mat = out_mat.at[group_idx].set(upd)
+            clip_fracs = clip_fracs.at[group_idx].set(clip_fraction)
+            return out_mat, clip_fracs
+
+        group_init = (
+            jnp.zeros((num_groups, max_size), dtype=h.dtype),
+            jnp.zeros((num_groups,), dtype=h.dtype),
+        )
+        group_mat, group_clip_fracs = jax.lax.fori_loop(0, num_groups, group_body, group_init)
+
+        group_local_sum = jnp.zeros((num_groups, max_size), dtype=h.dtype).at[shard_group_idxs].add(local_mat)
+        group_local_mean = group_local_sum / jnp.maximum(group_counts[:, None], 1.0)
+        residual_mat = local_mat - group_local_mean[shard_group_idxs]
+        out_preclip = group_mat[shard_group_idxs] + srghn.shard_residual_scale * residual_mat
+        out_mat = jnp.clip(out_preclip, srghn.stoch.clip_update[0], srghn.stoch.clip_update[1])
+        final_hit_clip = jnp.logical_or(
+            out_preclip <= srghn.stoch.clip_update[0], out_preclip >= srghn.stoch.clip_update[1]
+        )
+        final_clip_fracs = jnp.mean(final_hit_clip.astype(h.dtype), axis=1)
+        lrs = group_lrs[shard_group_idxs]
+        std_means = group_std_means[shard_group_idxs]
+        std_stds = group_std_stds[shard_group_idxs]
+        group_base_norm_mean = jnp.mean(
+            jnp.sqrt(jnp.maximum(jnp.sum(jnp.square(group_mat[shard_group_idxs]), axis=1), 0.0))
+        )
+        residual_norm_mean = jnp.mean(
+            jnp.sqrt(jnp.maximum(jnp.sum(jnp.square(residual_mat), axis=1), 0.0))
+        )
+        residual_to_group_norm = residual_norm_mean / jnp.maximum(group_base_norm_mean, 1e-8)
+    else:
+        raise ValueError(
+            f"Unknown self_update_mode: {srghn.self_update_mode!r}. "
+            "Expected one of: 'local', 'group_residual'."
+        )
 
     updates = _assemble_params(out_mat, srghn.self_spec)
     new_leaves = []
@@ -419,9 +480,6 @@ def mutate_with_stats(srghn: SRGHN, key: jax.random.KeyArray) -> tuple[SRGHN, di
     assembled_norm_mean, assembled_norm_per_shard_mean, assembled_norm_shard_corr = _assembled_update_norm_stats(
         updates, group_counts
     )
-    group_base_norm_mean = jnp.mean(jnp.sqrt(jnp.maximum(jnp.sum(jnp.square(group_mat[shard_group_idxs]), axis=1), 0.0)))
-    residual_norm_mean = jnp.mean(jnp.sqrt(jnp.maximum(jnp.sum(jnp.square(residual_mat), axis=1), 0.0)))
-    residual_to_group_norm = residual_norm_mean / jnp.maximum(group_base_norm_mean, 1e-8)
 
     stats = {
         "lr_mean": jnp.mean(lrs),

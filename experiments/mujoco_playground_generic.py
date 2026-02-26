@@ -26,6 +26,12 @@ def main():
     parser.add_argument("--children-per-parent", type=int, default=None)
     parser.add_argument("--episodes-per-eval", type=int, default=None)
     parser.add_argument(
+        "--gnn-aggregation",
+        choices=("sum", "mean"),
+        default=None,
+        help="Graph message aggregation mode in SR-GHN encoders.",
+    )
+    parser.add_argument(
         "--policy-hidden-dims",
         type=_parse_hidden_dims,
         default=None,
@@ -85,6 +91,12 @@ def main():
         default=None,
         help="Residual blend scale in group+residual updates (delta = group + scale * residual).",
     )
+    parser.add_argument(
+        "--self-update-mode",
+        choices=("local", "group_residual"),
+        default=None,
+        help="Self mutation mode: independent local shard updates or group+residual blending.",
+    )
     args = parser.parse_args()
 
     config_kwargs = {}
@@ -100,6 +112,8 @@ def main():
         config_kwargs["children_per_parent"] = args.children_per_parent
     if args.episodes_per_eval is not None:
         config_kwargs["episodes_per_eval"] = args.episodes_per_eval
+    if args.gnn_aggregation is not None:
+        config_kwargs["gnn_aggregation"] = args.gnn_aggregation
     if args.policy_hidden_dims is not None:
         config_kwargs["policy_hidden_dims"] = args.policy_hidden_dims
     if args.freeze_stoch_output_head is not None:
@@ -120,6 +134,8 @@ def main():
         config_kwargs["shard_graph_mode"] = args.shard_graph_mode
     if args.shard_residual_scale is not None:
         config_kwargs["shard_residual_scale"] = args.shard_residual_scale
+    if args.self_update_mode is not None:
+        config_kwargs["self_update_mode"] = args.self_update_mode
 
     config = make_config_mujoco_playground_generic(args.env_id, **config_kwargs)
     run_experiment(config)

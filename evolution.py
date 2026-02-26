@@ -62,8 +62,18 @@ def _init_single(key: jax.random.KeyArray, config, graphs, specs) -> SRGHN:
     self_node_emb = jax.random.normal(k_self_emb, (self_spec.num_nodes, config.embedding_dim))
     policy_node_emb = jax.random.normal(k_policy_emb, (policy_spec.num_nodes, config.embedding_dim))
 
-    encoder_self = GraphEncoder(config.gnn_hidden_dim, config.gnn_steps_self, key=k_enc_self)
-    encoder_policy = GraphEncoder(config.gnn_hidden_dim, config.gnn_steps_policy, key=k_enc_pol)
+    encoder_self = GraphEncoder(
+        config.gnn_hidden_dim,
+        config.gnn_steps_self,
+        aggregation=config.gnn_aggregation,
+        key=k_enc_self,
+    )
+    encoder_policy = GraphEncoder(
+        config.gnn_hidden_dim,
+        config.gnn_steps_policy,
+        aggregation=config.gnn_aggregation,
+        key=k_enc_pol,
+    )
 
     stoch = StochasticHyper(
         in_dim=config.gnn_hidden_dim,
@@ -106,6 +116,7 @@ def _init_single(key: jax.random.KeyArray, config, graphs, specs) -> SRGHN:
         self_weight_norm_mode=config.self_weight_norm_mode,
         self_weight_norm_target=config.self_weight_norm_target,
         self_weight_norm_eps=config.self_weight_norm_eps,
+        self_update_mode=config.self_update_mode,
         shard_residual_scale=config.shard_residual_scale,
         freeze_stoch_output_head=config.freeze_stoch_output_head,
     )
