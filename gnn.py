@@ -24,10 +24,15 @@ class GraphEncoder(eqx.Module):
         num_nodes = graph.num_nodes
         src = graph.src
         dst = graph.dst
+        in_deg = jnp.zeros((num_nodes,), dtype=h.dtype).at[dst].add(
+            jnp.ones((dst.shape[0],), dtype=h.dtype)
+        )
+        in_deg = jnp.maximum(in_deg, 1.0)
 
         def step_fn(_, h_t):
             messages = jax.vmap(self.msg)(h_t[src])
             agg = jnp.zeros((num_nodes, h_t.shape[-1]), dtype=h_t.dtype).at[dst].add(messages)
+            agg = agg / in_deg[:, None]
             h_next = jax.vmap(self.gru)(agg, h_t)
             return h_next
 
