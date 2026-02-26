@@ -17,7 +17,7 @@ def main():
     parser.add_argument(
         "--env-id",
         required=True,
-        help="MuJoCo Playground id, e.g., humanoid:run or humanoid/run",
+        help="MuJoCo Playground id, e.g., CheetahRun (or domain/task formats in suite versions that support them).",
     )
     parser.add_argument("--pop-size", type=int, default=None)
     parser.add_argument("--num-generations", type=int, default=None)
