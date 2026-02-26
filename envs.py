@@ -52,20 +52,57 @@ def _infer_action_info(env) -> tuple[int, bool, tuple[int, ...], jnp.ndarray | N
 def _load_mujoco_playground_env(env_id: str):
     from mujoco_playground import registry as suite
 
+    domain_task: tuple[str, str] | None = None
     if ":" in env_id:
         domain, task = env_id.split(":", 1)
-        return suite.load(domain, task)
-    if "/" in env_id:
+        domain_task = (domain, task)
+    elif "/" in env_id:
         domain, task = env_id.split("/", 1)
-        return suite.load(domain, task)
-    if hasattr(suite, "load"):
+        domain_task = (domain, task)
+
+    attempted: list[str] = []
+
+    def _try_call(fn, *args):
+        attempted.append(f"{fn.__name__}{args}")
         try:
-            return suite.load(env_id)
-        except TypeError:
-            pass
+            return fn(*args)
+        except (TypeError, ValueError, KeyError):
+            return None
+
+    if hasattr(suite, "load"):
+        load_fn = suite.load
+        if domain_task is not None:
+            domain, task = domain_task
+            env = _try_call(load_fn, domain, task)
+            if env is not None:
+                return env
+            env = _try_call(load_fn, task)
+            if env is not None:
+                return env
+        env = _try_call(load_fn, env_id)
+        if env is not None:
+            return env
+
     if hasattr(suite, "make"):
-        return suite.make(env_id)
-    raise ValueError("Unsupported mujoco_playground suite API.")
+        make_fn = suite.make
+        if domain_task is not None:
+            domain, task = domain_task
+            env = _try_call(make_fn, domain, task)
+            if env is not None:
+                return env
+            env = _try_call(make_fn, task)
+            if env is not None:
+                return env
+        env = _try_call(make_fn, env_id)
+        if env is not None:
+            return env
+
+    attempted_desc = ", ".join(attempted) if attempted else "<none>"
+    raise ValueError(
+        "Unable to load MuJoCo Playground env "
+        f"{env_id!r}. Tried: {attempted_desc}. "
+        "Use a valid registry name (e.g., 'CheetahRun') or a domain/task id if your suite version supports it."
+    )
 
 
 def make_env(config):
