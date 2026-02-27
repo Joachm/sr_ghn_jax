@@ -6,3 +6,5 @@ brax
 wandb
 mujoco-playground
 pillow
+imageio
+imageio-ffmpeg

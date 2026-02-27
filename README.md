@@ -13,5 +13,5 @@ python -m experiments.mujoco_playground_generic --env-id humanoid:run --children
 ```
 
 For `mujoco_playground` runs, the final artifacts directory now also includes:
-- `champion_rollout.gif`: automatic rollout recording of the final population champion.
+- `champion_rollout.mp4`: automatic rollout recording of the final population champion.
 - `champion_rollout.json`: champion index/fitness and recording metadata.

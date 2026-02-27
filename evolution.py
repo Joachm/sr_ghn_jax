@@ -22,16 +22,37 @@ from specs import ParamNodeSpec
 class EvoState:
     pop: SRGHN
     key: jax.random.KeyArray
+    latest_gen_champion: SRGHN
+    latest_gen_champion_fitness: jnp.ndarray
+    latest_gen_champion_candidate_idx: jnp.ndarray
 
     def tree_flatten(self):
-        children = (self.pop, self.key)
+        children = (
+            self.pop,
+            self.key,
+            self.latest_gen_champion,
+            self.latest_gen_champion_fitness,
+            self.latest_gen_champion_candidate_idx,
+        )
         aux_data = None
         return children, aux_data
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
-        pop, key = children
-        return cls(pop=pop, key=key)
+        (
+            pop,
+            key,
+            latest_gen_champion,
+            latest_gen_champion_fitness,
+            latest_gen_champion_candidate_idx,
+        ) = children
+        return cls(
+            pop=pop,
+            key=key,
+            latest_gen_champion=latest_gen_champion,
+            latest_gen_champion_fitness=latest_gen_champion_fitness,
+            latest_gen_champion_candidate_idx=latest_gen_champion_candidate_idx,
+        )
 
 
 def _unpack_graphs(graphs: Any) -> tuple[GraphSpec, GraphSpec]:
@@ -125,6 +146,12 @@ def _init_single(key: jax.random.KeyArray, config, graphs, specs) -> SRGHN:
 def init_population(key: jax.random.KeyArray, config, graphs, specs) -> SRGHN:
     keys = jax.random.split(key, config.pop_size)
     return eqx.filter_vmap(lambda k: _init_single(k, config, graphs, specs))(keys)
+
+
+def _select_individual(pop, idx):
+    pop_arr, pop_static = eqx.partition(pop, eqx.is_array)
+    pop_arr = jax.tree_util.tree_map(lambda x: x[idx], pop_arr)
+    return eqx.combine(pop_arr, pop_static)
 
 
 def _sumsq_per_individual(module) -> jnp.ndarray:
@@ -221,10 +248,6 @@ def _masked_mean(x: jnp.ndarray, mask: jnp.ndarray) -> jnp.ndarray:
 
 def evo_step(state: EvoState, gen: jnp.int32, config) -> tuple[EvoState, dict]:
     key, key_eval, key_children = jax.random.split(state.key, 3)
-    def _select_individual(pop, idx):
-        pop_arr, pop_static = eqx.partition(pop, eqx.is_array)
-        pop_arr = jax.tree_util.tree_map(lambda x: x[idx], pop_arr)
-        return eqx.combine(pop_arr, pop_static)
 
     def _wandb_log(metrics_dict, gen_idx):
         try:
@@ -267,6 +290,14 @@ def evo_step(state: EvoState, gen: jnp.int32, config) -> tuple[EvoState, dict]:
     selection_fitness = jnp.concatenate([blended_parent, child_fitness.reshape(-1)], axis=0)
     select_idx = jnp.argsort(selection_fitness)[-config.pop_size :]
     selected_fitness = selection_fitness[select_idx]
+    champion_candidate_idx = jnp.argmax(all_fitness)
+    champion_raw_fitness = all_fitness[champion_candidate_idx]
+    champion_selected = jnp.any(select_idx == champion_candidate_idx)
+    champion_slot_idx = jnp.where(
+        champion_selected,
+        jnp.argmax((select_idx == champion_candidate_idx).astype(jnp.int32)),
+        jnp.array(-1, dtype=jnp.int32),
+    )
     selected_is_child = select_idx >= config.pop_size
     selected_child_idx = jnp.clip(select_idx - config.pop_size, 0, num_children - 1)
     selected_child_counts = jnp.zeros((num_children,), dtype=jnp.int32).at[selected_child_idx].add(
@@ -322,6 +353,10 @@ def evo_step(state: EvoState, gen: jnp.int32, config) -> tuple[EvoState, dict]:
             "selected_fitness_mean": jnp.mean(selected_fitness),
             "selection_threshold": jnp.min(selected_fitness),
             "elite_turnover": jnp.mean((select_idx >= config.pop_size).astype(jnp.float32)),
+            "champion_slot_idx": champion_slot_idx.astype(jnp.float32),
+            "champion_candidate_idx": champion_candidate_idx.astype(jnp.float32),
+            "champion_raw_fitness": champion_raw_fitness,
+            "champion_selected": champion_selected.astype(jnp.float32),
             "mutation_delta_l2": jnp.mean(mutation_delta_l2),
             "mutation_delta_rel_l2": jnp.mean(mutation_delta_rel_l2),
             "mutation_delta_encoder_self_l2": jnp.mean(delta_encoder_self_l2),
@@ -389,14 +424,27 @@ def evo_step(state: EvoState, gen: jnp.int32, config) -> tuple[EvoState, dict]:
     jax.debug.callback(_wandb_log, metrics, gen)
     next_arr = jax.tree_util.tree_map(lambda x: x[select_idx], all_arr)
     next_pop = eqx.combine(next_arr, children_static)
+    latest_gen_champion = _select_individual(all_candidates, champion_candidate_idx)
 
-    return EvoState(pop=next_pop, key=key), metrics
+    return EvoState(
+        pop=next_pop,
+        key=key,
+        latest_gen_champion=latest_gen_champion,
+        latest_gen_champion_fitness=champion_raw_fitness,
+        latest_gen_champion_candidate_idx=champion_candidate_idx.astype(jnp.int32),
+    ), metrics
 
 
 def run(key: jax.random.KeyArray, config, graphs, specs):
     key_init, key_loop = jax.random.split(key, 2)
     init_pop = init_population(key_init, config, graphs, specs)
-    init_state = EvoState(pop=init_pop, key=key_loop)
+    init_state = EvoState(
+        pop=init_pop,
+        key=key_loop,
+        latest_gen_champion=_select_individual(init_pop, 0),
+        latest_gen_champion_fitness=jnp.array(-jnp.inf, dtype=jnp.float32),
+        latest_gen_champion_candidate_idx=jnp.array(-1, dtype=jnp.int32),
+    )
     gens = jnp.arange(config.num_generations, dtype=jnp.int32)
 
     def step_fn(state, gen):

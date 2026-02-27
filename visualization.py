@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import os
+from functools import partial
 from typing import Any, Sequence
 
 import jax
 import jax.numpy as jnp
 import numpy as np
-from PIL import Image
 
 from envs import make_env, map_action_for_switch
 from policy import apply_policy
@@ -33,6 +33,13 @@ def _to_uint8_frame(frame: Any) -> np.ndarray:
 
 
 def _normalize_render_output(frames: Any) -> list[np.ndarray]:
+    # Common structured render payloads: {"rgb": ...} or {"frames": ...}
+    if isinstance(frames, dict):
+        for key in ("rgb", "frames", "images", "image"):
+            if key in frames:
+                return _normalize_render_output(frames[key])
+        raise ValueError(f"Unsupported render dict keys: {tuple(frames.keys())}")
+
     arr = np.asarray(jax.device_get(frames))
     if arr.ndim == 4:
         return [arr[i] for i in range(arr.shape[0])]
@@ -44,6 +51,26 @@ def _normalize_render_output(frames: Any) -> list[np.ndarray]:
             out.extend(_normalize_render_output(frame))
         return out
     raise ValueError("Unsupported render output format; expected array or sequence of arrays.")
+
+
+def _stack_trajectory_states(pipeline_states: Sequence[Any]) -> Any:
+    if not pipeline_states:
+        raise ValueError("No pipeline states available for rendering.")
+    if len(pipeline_states) == 1:
+        return pipeline_states[0]
+    return jax.tree_util.tree_map(lambda *xs: jnp.stack(xs, axis=0), *pipeline_states)
+
+
+def _render_single_state_frames(render_fn, pipeline_states: Sequence[Any], kwargs: dict[str, Any]) -> list[np.ndarray]:
+    frames: list[np.ndarray] = []
+    for state in pipeline_states:
+        out = render_fn(state, **kwargs)
+        normalized = _normalize_render_output(out)
+        if not normalized:
+            continue
+        # If renderer returned a short clip for one state, keep the first frame.
+        frames.append(normalized[0])
+    return frames
 
 
 def _render_mujoco_playground_frames(
@@ -62,11 +89,13 @@ def _render_mujoco_playground_frames(
     if camera is not None:
         kwargs["camera"] = camera
 
+    traj = _stack_trajectory_states(pipeline_states)
     attempts = [
-        lambda: render_fn(pipeline_states, **kwargs),
-        lambda: render_fn(pipeline_states),
-        lambda: render_fn(trajectory=pipeline_states, **kwargs),
-        lambda: render_fn(states=pipeline_states, **kwargs),
+        lambda: render_fn(traj, **kwargs),
+        lambda: render_fn(traj),
+        lambda: render_fn(trajectory=traj, **kwargs),
+        lambda: render_fn(states=traj, **kwargs),
+        partial(_render_single_state_frames, render_fn, pipeline_states, kwargs),
     ]
     errors: list[str] = []
     for attempt in attempts:
@@ -84,20 +113,42 @@ def _render_mujoco_playground_frames(
     )
 
 
-def _save_gif(frames: Sequence[np.ndarray], path: str, fps: int) -> None:
+def _ensure_even_hw(frame: np.ndarray) -> np.ndarray:
+    h, w = frame.shape[:2]
+    pad_h = h % 2
+    pad_w = w % 2
+    if pad_h == 0 and pad_w == 0:
+        return frame
+    return np.pad(frame, ((0, pad_h), (0, pad_w), (0, 0)), mode="edge")
+
+
+def _save_mp4(frames: Sequence[np.ndarray], path: str, fps: int) -> None:
     if not frames:
         raise ValueError("No frames to save.")
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    pil_frames = [Image.fromarray(_to_uint8_frame(frame)) for frame in frames]
-    duration_ms = max(1, int(round(1000.0 / max(fps, 1))))
-    pil_frames[0].save(
+    try:
+        import imageio.v2 as imageio
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError(
+            "MP4 writing requires `imageio` and `imageio-ffmpeg`. "
+            "Install them with `pip install imageio imageio-ffmpeg`."
+        ) from exc
+
+    frames_u8 = [_ensure_even_hw(_to_uint8_frame(frame)) for frame in frames]
+    writer = imageio.get_writer(
         path,
-        save_all=True,
-        append_images=pil_frames[1:],
-        duration=duration_ms,
-        loop=0,
-        optimize=False,
+        format="FFMPEG",
+        mode="I",
+        fps=max(int(fps), 1),
+        codec="libx264",
+        pixelformat="yuv420p",
+        macro_block_size=1,
     )
+    try:
+        for frame in frames_u8:
+            writer.append_data(frame)
+    finally:
+        writer.close()
 
 
 def record_mujoco_playground_rollout(
@@ -157,7 +208,7 @@ def record_mujoco_playground_rollout(
         width=width,
         height=height,
     )
-    _save_gif(frames, output_path, fps=fps)
+    _save_mp4(frames, output_path, fps=fps)
 
     return {
         "path": output_path,

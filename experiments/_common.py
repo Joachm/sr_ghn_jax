@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, asdict
 import json
 import os
+import traceback
 from datetime import datetime
 from typing import Tuple
 
@@ -15,7 +16,6 @@ from evolution import run_jit
 from graphs import GraphSpec, make_chain_graph, make_parallel_shard_graph
 from gnn import GraphEncoder
 from hypernets import DeterministicHead, StochasticHyper
-from rollout import evaluate_individual
 from specs import ParamNodeSpec, policy_spec_for_task, srghn_self_spec
 from srghn import SRGHN
 from visualization import record_mujoco_playground_rollout
@@ -200,41 +200,47 @@ def _select_individual(pop: SRGHN, idx: int | jnp.ndarray) -> SRGHN:
     return eqx.combine(pop_arr, pop_static)
 
 
-def _record_champion_rollout(config, final_state, run_dir: str) -> None:
+def _last_metric_value(metrics: dict, key: str) -> jnp.ndarray:
+    if key not in metrics:
+        raise KeyError(f"Metric {key!r} not found in run outputs.")
+    value = metrics[key]
+    value = jnp.asarray(value)
+    if value.ndim == 0:
+        return value
+    return value[-1]
+
+
+def _record_champion_rollout(config, final_state, metrics, run_dir: str) -> None:
     if config.env_backend != "mujoco_playground":
         return
 
-    print("Evaluating final population for champion rollout...")
-    gen = int(config.num_generations)
-    key = jax.random.key(config.seed + 1_000_003)
-    eval_key, key_candidates = jax.random.split(key, 2)
-    candidate_keys = jax.random.split(key_candidates, config.pop_size)
-    fitness_values = []
-    gen_arr = jnp.asarray(gen, dtype=jnp.int32)
-    for i in range(config.pop_size):
-        fitness_i = evaluate_individual(
-            _select_individual(final_state.pop, i),
-            candidate_keys[i],
-            gen_arr,
-            config,
-        )
-        fitness_values.append(fitness_i)
-    fitness = jnp.stack(fitness_values)
+    print("Selecting champion from latest generation metrics...")
+    champion_fitness = float(_last_metric_value(metrics, "champion_raw_fitness"))
+    champion_candidate_idx = int(_last_metric_value(metrics, "champion_candidate_idx"))
+    champion_selected_slot = int(_last_metric_value(metrics, "champion_slot_idx"))
 
-    champion_idx = int(jnp.argmax(fitness))
-    champion_fitness = float(fitness[champion_idx])
-    champion = _select_individual(final_state.pop, champion_idx)
-    rollout_path = os.path.join(run_dir, "champion_rollout.gif")
+    gen = int(config.num_generations) - 1
+    key = jax.random.key(config.seed + 1_000_003)
+    champion = getattr(final_state, "latest_gen_champion", None)
+    if champion is None:
+        if champion_selected_slot < 0 or champion_selected_slot >= config.pop_size:
+            raise ValueError(
+                "Champion from latest generation is not in final selected population, "
+                "and no carried champion individual is available in final_state."
+            )
+        champion = _select_individual(final_state.pop, champion_selected_slot)
+    rollout_path = os.path.join(run_dir, "champion_rollout.mp4")
     rollout_stats = record_mujoco_playground_rollout(
         champion,
         config,
         rollout_path,
-        key=eval_key,
+        key=key,
         gen=gen,
     )
     metadata = {
-        "champion_index": champion_idx,
-        "champion_fitness_eval": champion_fitness,
+        "champion_candidate_index": champion_candidate_idx,
+        "champion_selected_slot": champion_selected_slot,
+        "champion_fitness_latest_generation": champion_fitness,
         **rollout_stats,
     }
     metadata_path = os.path.join(run_dir, "champion_rollout.json")
@@ -271,14 +277,24 @@ def run_experiment(config):
     spec_tuple = (specs.self_spec, specs.policy_spec)
     final_state, metrics = run_jit(key, config, graph_tuple, spec_tuple)
     run_dir = save_artifacts(config, final_state, metrics)
+    rollout_error = None
     try:
-        _record_champion_rollout(config, final_state, run_dir)
+        _record_champion_rollout(config, final_state, metrics, run_dir)
     except Exception as exc:  # noqa: BLE001
+        rollout_error = exc
         print(f"Champion rollout recording skipped: {type(exc).__name__}: {exc}")
+        error_path = os.path.join(run_dir, "champion_rollout_error.txt")
+        with open(error_path, "w", encoding="utf-8") as f:
+            f.write(f"{type(exc).__name__}: {exc}\n\n")
+            f.write(traceback.format_exc())
+        print(f"Saved rollout error details to {error_path}")
     try:
         if wandb is not None:
             wandb.finish()
     except Exception:
         pass
-    print(f"Saved artifacts to {run_dir}")
+    if rollout_error is None:
+        print(f"Saved artifacts to {run_dir} (with champion rollout MP4)")
+    else:
+        print(f"Saved artifacts to {run_dir} (rollout MP4 failed; see champion_rollout_error.txt)")
     return final_state, metrics
