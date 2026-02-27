@@ -12,7 +12,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from evolution import run_jit
+from evolution import run
 from graphs import GraphSpec, make_chain_graph, make_parallel_shard_graph
 from gnn import GraphEncoder
 from hypernets import DeterministicHead, StochasticHyper
@@ -282,7 +282,9 @@ def run_experiment(config):
         wandb = None
     graph_tuple = (graphs.self_graph, graphs.policy_graph)
     spec_tuple = (specs.self_spec, specs.policy_spec)
-    final_state, metrics = run_jit(key, config, graph_tuple, spec_tuple)
+    # Bind graphs/specs as closed-over constants so they don't enter JIT as traced args.
+    run_bound = jax.jit(lambda k: run(k, config, graph_tuple, spec_tuple))
+    final_state, metrics = run_bound(key)
     run_dir = save_artifacts(config, final_state, metrics)
     rollout_error = None
     try:
