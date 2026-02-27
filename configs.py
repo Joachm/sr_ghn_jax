@@ -24,6 +24,7 @@ class ExperimentConfig:
     self_shard_size: int
     shard_graph_mode: str
     self_update_mode: str
+    mutation_clip_mode: str
     shard_residual_scale: float
     stoch_cov_rank: int
     stoch_cov_scale: float
@@ -66,7 +67,8 @@ def make_config_cartpole_switch() -> ExperimentConfig:
         policy_head_max_out=None,
         self_shard_size=1024,
         shard_graph_mode="sibling_chain",
-        self_update_mode="local",
+        self_update_mode="tensor_coherent",
+        mutation_clip_mode="legacy",
         shard_residual_scale=0.25,
         stoch_cov_rank=0,
         stoch_cov_scale=0.1,
@@ -110,7 +112,8 @@ def make_config_ant_brax() -> ExperimentConfig:
         policy_head_max_out=None,
         self_shard_size=1024,
         shard_graph_mode="sibling_chain",
-        self_update_mode="local",
+        self_update_mode="tensor_coherent",
+        mutation_clip_mode="legacy",
         shard_residual_scale=0.25,
         stoch_cov_rank=0,
         stoch_cov_scale=0.1,
@@ -152,7 +155,8 @@ def make_config_gymnax_generic(
     policy_head_max_out: int | None = None,
     self_shard_size: int = 1024,
     shard_graph_mode: str = "sibling_chain",
-    self_update_mode: str = "local",
+    self_update_mode: str = "tensor_coherent",
+    mutation_clip_mode: str = "legacy",
     shard_residual_scale: float = 0.25,
     stoch_cov_rank: int = 0,
     stoch_cov_scale: float = 0.1,
@@ -177,6 +181,7 @@ def make_config_gymnax_generic(
         self_shard_size=self_shard_size,
         shard_graph_mode=shard_graph_mode,
         self_update_mode=self_update_mode,
+        mutation_clip_mode=mutation_clip_mode,
         shard_residual_scale=shard_residual_scale,
         stoch_cov_rank=stoch_cov_rank,
         stoch_cov_scale=stoch_cov_scale,
@@ -219,7 +224,8 @@ def make_config_brax_generic(
     policy_head_max_out: int | None = None,
     self_shard_size: int = 1024,
     shard_graph_mode: str = "sibling_chain",
-    self_update_mode: str = "local",
+    self_update_mode: str = "tensor_coherent",
+    mutation_clip_mode: str = "legacy",
     shard_residual_scale: float = 0.25,
     stoch_cov_rank: int = 0,
     stoch_cov_scale: float = 0.1,
@@ -244,6 +250,7 @@ def make_config_brax_generic(
         self_shard_size=self_shard_size,
         shard_graph_mode=shard_graph_mode,
         self_update_mode=self_update_mode,
+        mutation_clip_mode=mutation_clip_mode,
         shard_residual_scale=shard_residual_scale,
         stoch_cov_rank=stoch_cov_rank,
         stoch_cov_scale=stoch_cov_scale,
@@ -285,7 +292,8 @@ def make_config_mujoco_playground_generic(
     policy_head_max_out: int | None = None,
     self_shard_size: int = 1024,
     shard_graph_mode: str = "sibling_chain",
-    self_update_mode: str = "local",
+    self_update_mode: str = "tensor_coherent",
+    mutation_clip_mode: str = "legacy",
     shard_residual_scale: float = 0.25,
     stoch_cov_rank: int = 0,
     stoch_cov_scale: float = 0.1,
@@ -310,6 +318,7 @@ def make_config_mujoco_playground_generic(
         self_shard_size=self_shard_size,
         shard_graph_mode=shard_graph_mode,
         self_update_mode=self_update_mode,
+        mutation_clip_mode=mutation_clip_mode,
         shard_residual_scale=shard_residual_scale,
         stoch_cov_rank=stoch_cov_rank,
         stoch_cov_scale=stoch_cov_scale,

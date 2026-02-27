@@ -93,9 +93,15 @@ def main():
     )
     parser.add_argument(
         "--self-update-mode",
-        choices=("local", "group_residual"),
+        choices=("local", "group_residual", "tensor_coherent"),
         default=None,
-        help="Self mutation mode: independent local shard updates or group+residual blending.",
+        help="Self mutation mode: local shard updates, group+residual blending, or tensor-coherent grouped updates.",
+    )
+    parser.add_argument(
+        "--mutation-clip-mode",
+        choices=("double", "legacy"),
+        default=None,
+        help="Post-mix update clipping mode: current double clip or legacy (no extra post-mix clip).",
     )
     args = parser.parse_args()
 
@@ -136,6 +142,8 @@ def main():
         config_kwargs["shard_residual_scale"] = args.shard_residual_scale
     if args.self_update_mode is not None:
         config_kwargs["self_update_mode"] = args.self_update_mode
+    if args.mutation_clip_mode is not None:
+        config_kwargs["mutation_clip_mode"] = args.mutation_clip_mode
 
     config = make_config_mujoco_playground_generic(args.env_id, **config_kwargs)
     run_experiment(config)

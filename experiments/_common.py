@@ -95,6 +95,7 @@ def _build_template_srghn(
         self_weight_norm_target=config.self_weight_norm_target,
         self_weight_norm_eps=config.self_weight_norm_eps,
         self_update_mode=config.self_update_mode,
+        mutation_clip_mode=config.mutation_clip_mode,
         shard_residual_scale=config.shard_residual_scale,
         freeze_stoch_output_head=config.freeze_stoch_output_head,
     )
@@ -114,10 +115,16 @@ def build_graphs_and_specs(config) -> tuple[GraphBundle, SpecBundle]:
         raise ValueError("self_shard_size must be positive.")
     if float(config.shard_residual_scale) < 0.0:
         raise ValueError("shard_residual_scale must be non-negative.")
-    if str(config.self_update_mode) not in ("local", "group_residual"):
+    if str(config.self_update_mode) not in ("local", "group_residual", "tensor_coherent"):
         raise ValueError(
             f"Invalid self_update_mode={config.self_update_mode!r}. "
-            "Expected one of ('local', 'group_residual')."
+            "Expected one of ('local', 'group_residual', 'tensor_coherent')."
+        )
+    mutation_clip_mode = str(getattr(config, "mutation_clip_mode", "double"))
+    if mutation_clip_mode not in ("double", "legacy"):
+        raise ValueError(
+            f"Invalid mutation_clip_mode={mutation_clip_mode!r}. "
+            "Expected one of ('double', 'legacy')."
         )
     shard_graph_mode = str(getattr(config, "shard_graph_mode", "dense"))
     valid_shard_graph_modes = ("dense", "sibling_chain", "hub")
