@@ -31,6 +31,8 @@ class ExperimentConfig:
     env_backend: str
     env_id: str
     brax_backend: str | None
+    obs_norm_clip: float
+    obs_norm_eps: float
 
 
 def make_config_cartpole_switch(
@@ -65,6 +67,8 @@ def make_config_cartpole_switch(
         env_backend="gymnax",
         env_id="CartPole-v1",
         brax_backend=None,
+        obs_norm_clip=5.0,
+        obs_norm_eps=1e-8,
     )
 
 
@@ -100,6 +104,8 @@ def make_config_ant_brax(
         env_backend="brax",
         env_id="ant",
         brax_backend=None,
+        obs_norm_clip=5.0,
+        obs_norm_eps=1e-8,
     )
 
 
@@ -143,6 +149,8 @@ def make_config_gymnax_generic(
         env_backend="gymnax",
         env_id=env_id,
         brax_backend=None,
+        obs_norm_clip=5.0,
+        obs_norm_eps=1e-8,
     )
 
 
@@ -187,6 +195,8 @@ def make_config_brax_generic(
         env_backend="brax",
         env_id=env_id,
         brax_backend=brax_backend,
+        obs_norm_clip=5.0,
+        obs_norm_eps=1e-8,
     )
 
 
@@ -230,4 +240,6 @@ def make_config_mujoco_playground_generic(
         env_backend="mujoco_playground",
         env_id=env_id,
         brax_backend=None,
+        obs_norm_clip=5.0,
+        obs_norm_eps=1e-8,
     )

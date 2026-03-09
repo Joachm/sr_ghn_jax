@@ -4,21 +4,35 @@ import jax
 import jax.numpy as jnp
 
 from envs import make_env, map_action_for_switch
+from obs_norm import normalize_obs
 from policy import apply_policy
 from srghn import make_policy
 
 
-def rollout_episode(policy_params, key: jax.random.KeyArray, gen: jnp.ndarray, config) -> jnp.ndarray:
-    env, env_params, _, _, is_discrete, action_shape, action_low, action_high = make_env(config)
+def rollout_episode(
+    policy_params,
+    key: jax.random.KeyArray,
+    gen: jnp.ndarray,
+    config,
+    obs_norm_state=None,
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    env, env_params, obs_dim, _, is_discrete, action_shape, action_low, action_high = make_env(config)
+    obs_dtype = jnp.float32
 
     if config.env_backend == "gymnax":
         key, key_reset = jax.random.split(key, 2)
         obs, state = env.reset(key_reset, env_params)
 
         def step_fn(carry, _):
-            obs_t, state_t, done_t, key_t = carry
+            obs_t, state_t, done_t, key_t, obs_sum_t, obs_sq_sum_t, obs_count_t = carry
             key_t, key_step = jax.random.split(key_t, 2)
-            action = apply_policy(policy_params, obs_t, is_discrete=is_discrete)
+            obs_flat = jnp.ravel(jnp.asarray(obs_t, dtype=obs_dtype))
+            active = jnp.asarray(~done_t, dtype=obs_dtype)
+            obs_sum_t = obs_sum_t + active * obs_flat
+            obs_sq_sum_t = obs_sq_sum_t + active * jnp.square(obs_flat)
+            obs_count_t = obs_count_t + active
+            obs_in = normalize_obs(obs_t, obs_norm_state, clip=config.obs_norm_clip, eps=config.obs_norm_eps)
+            action = apply_policy(policy_params, obs_in, is_discrete=is_discrete)
             action = map_action_for_switch(action, gen, config)
             if is_discrete:
                 action = jnp.asarray(action, dtype=jnp.int32)
@@ -39,16 +53,22 @@ def rollout_episode(policy_params, key: jax.random.KeyArray, gen: jnp.ndarray, c
 
             next_obs, next_state, reward, done = jax.lax.cond(done_t, skip_step, do_step, operand=None)
             done = jnp.logical_or(done_t, done)
-            return (next_obs, next_state, done, key_t), reward
+            return (next_obs, next_state, done, key_t, obs_sum_t, obs_sq_sum_t, obs_count_t), reward
 
     else:
         state = env.reset(key)
         obs = state.obs
 
         def step_fn(carry, _):
-            obs_t, state_t, done_t, key_t = carry
+            obs_t, state_t, done_t, key_t, obs_sum_t, obs_sq_sum_t, obs_count_t = carry
             key_t, key_step = jax.random.split(key_t, 2)
-            action = apply_policy(policy_params, obs_t, is_discrete=is_discrete)
+            obs_flat = jnp.ravel(jnp.asarray(obs_t, dtype=obs_dtype))
+            active = jnp.asarray(~done_t, dtype=obs_dtype)
+            obs_sum_t = obs_sum_t + active * obs_flat
+            obs_sq_sum_t = obs_sq_sum_t + active * jnp.square(obs_flat)
+            obs_count_t = obs_count_t + active
+            obs_in = normalize_obs(obs_t, obs_norm_state, clip=config.obs_norm_clip, eps=config.obs_norm_eps)
+            action = apply_policy(policy_params, obs_in, is_discrete=is_discrete)
             action = map_action_for_switch(action, gen, config)
             if is_discrete:
                 action = jnp.asarray(action, dtype=jnp.int32)
@@ -69,20 +89,44 @@ def rollout_episode(policy_params, key: jax.random.KeyArray, gen: jnp.ndarray, c
 
             next_obs, next_state, reward, done = jax.lax.cond(done_t, skip_step, do_step, operand=None)
             done = jnp.logical_or(done_t, done)
-            return (next_obs, next_state, done, key_t), reward
+            return (next_obs, next_state, done, key_t, obs_sum_t, obs_sq_sum_t, obs_count_t), reward
 
     init_done = jnp.array(False)
-    (final_obs, final_state, final_done, final_key), rewards = jax.lax.scan(
+    init_obs_sum = jnp.zeros((obs_dim,), dtype=obs_dtype)
+    init_obs_sq_sum = jnp.zeros((obs_dim,), dtype=obs_dtype)
+    init_obs_count = jnp.zeros((), dtype=obs_dtype)
+    (_, _, _, _, obs_sum, obs_sq_sum, obs_count), rewards = jax.lax.scan(
         step_fn,
-        (obs, state, init_done, key),
+        (obs, state, init_done, key, init_obs_sum, init_obs_sq_sum, init_obs_count),
         None,
         length=config.episode_horizon,
     )
-    return jnp.sum(rewards)
+    return jnp.sum(rewards), obs_sum, obs_sq_sum, obs_count
 
 
-def evaluate_individual(srghn, key: jax.random.KeyArray, gen: jnp.ndarray, config) -> jnp.ndarray:
+def evaluate_individual(
+    srghn,
+    key: jax.random.KeyArray,
+    gen: jnp.ndarray,
+    config,
+    obs_norm_state=None,
+) -> jnp.ndarray:
     policy_params = make_policy(srghn)
     keys = jax.random.split(key, config.episodes_per_eval)
-    returns = jax.vmap(lambda k: rollout_episode(policy_params, k, gen, config))(keys)
+    returns, _, _, _ = jax.vmap(lambda k: rollout_episode(policy_params, k, gen, config, obs_norm_state))(keys)
     return jnp.mean(returns)
+
+
+def evaluate_individual_with_obs_stats(
+    srghn,
+    key: jax.random.KeyArray,
+    gen: jnp.ndarray,
+    config,
+    obs_norm_state=None,
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    policy_params = make_policy(srghn)
+    keys = jax.random.split(key, config.episodes_per_eval)
+    returns, obs_sum, obs_sq_sum, obs_count = jax.vmap(
+        lambda k: rollout_episode(policy_params, k, gen, config, obs_norm_state)
+    )(keys)
+    return jnp.mean(returns), jnp.sum(obs_sum, axis=0), jnp.sum(obs_sq_sum, axis=0), jnp.sum(obs_count, axis=0)

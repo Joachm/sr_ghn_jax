@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Tuple
+from typing import Any
 
 import equinox as eqx
 import jax
@@ -11,7 +11,8 @@ from envs import make_env
 from graphs import GraphSpec
 from hypernets import DeterministicHead, StochasticHyper
 from metrics import compute_metrics
-from rollout import evaluate_individual
+from obs_norm import ObsNormState, init_obs_norm, update_obs_norm
+from rollout import evaluate_individual_with_obs_stats
 from srghn import SRGHN, mutate
 from gnn import GraphEncoder
 from specs import ParamNodeSpec
@@ -22,16 +23,17 @@ from specs import ParamNodeSpec
 class EvoState:
     pop: SRGHN
     key: jax.random.KeyArray
+    obs_norm: ObsNormState
 
     def tree_flatten(self):
-        children = (self.pop, self.key)
+        children = (self.pop, self.key, self.obs_norm)
         aux_data = None
         return children, aux_data
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
-        pop, key = children
-        return cls(pop=pop, key=key)
+        pop, key, obs_norm = children
+        return cls(pop=pop, key=key, obs_norm=obs_norm)
 
 
 def _unpack_graphs(graphs: Any) -> tuple[GraphSpec, GraphSpec]:
@@ -153,8 +155,14 @@ def evo_step(state: EvoState, gen: jnp.int32, config) -> tuple[EvoState, dict]:
     all_count = config.pop_size + num_children
     eval_keys = jax.random.split(key_eval, all_count)
     all_idxs = jnp.arange(all_count)
-    all_fitness = jax.vmap(
-        lambda i, k: evaluate_individual(_select_individual(all_candidates, i), k, gen, config)
+    all_fitness, all_obs_sum, all_obs_sq_sum, all_obs_count = jax.vmap(
+        lambda i, k: evaluate_individual_with_obs_stats(
+            _select_individual(all_candidates, i),
+            k,
+            gen,
+            config,
+            state.obs_norm,
+        )
     )(all_idxs, eval_keys)
     parent_fitness = all_fitness[: config.pop_size]
     child_fitness = all_fitness[config.pop_size :]
@@ -169,14 +177,21 @@ def evo_step(state: EvoState, gen: jnp.int32, config) -> tuple[EvoState, dict]:
     select_idx = jnp.argsort(selection_fitness)[-config.pop_size :]
     next_arr = jax.tree_util.tree_map(lambda x: x[select_idx], all_arr)
     next_pop = eqx.combine(next_arr, children_static)
+    next_obs_norm = update_obs_norm(
+        state.obs_norm,
+        jnp.sum(all_obs_sum[select_idx], axis=0),
+        jnp.sum(all_obs_sq_sum[select_idx], axis=0),
+        jnp.sum(all_obs_count[select_idx], axis=0),
+    )
 
-    return EvoState(pop=next_pop, key=key), metrics
+    return EvoState(pop=next_pop, key=key, obs_norm=next_obs_norm), metrics
 
 
 def run(key: jax.random.KeyArray, config, graphs, specs):
     key_init, key_loop = jax.random.split(key, 2)
     init_pop = init_population(key_init, config, graphs, specs)
-    init_state = EvoState(pop=init_pop, key=key_loop)
+    _, _, obs_dim, _, _, _, _, _ = make_env(config)
+    init_state = EvoState(pop=init_pop, key=key_loop, obs_norm=init_obs_norm(obs_dim))
     gens = jnp.arange(config.num_generations, dtype=jnp.int32)
 
     def step_fn(state, gen):

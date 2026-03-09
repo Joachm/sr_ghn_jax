@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from envs import make_env, map_action_for_switch
+from obs_norm import normalize_obs
 from policy import apply_policy
 from solution_artifacts import load_solution_artifact
 from srghn import make_policy
@@ -78,7 +79,7 @@ def _write_video_ffmpeg(frames: np.ndarray, output_path: Path, fps: int) -> None
         raise RuntimeError(stderr.decode("utf-8", errors="replace") or "ffmpeg failed to encode video.")
 
 
-def _rollout_trajectory(individual, config, *, key: jax.random.KeyArray):
+def _rollout_trajectory(individual, config, *, key: jax.random.KeyArray, obs_norm_state=None):
     if config.env_backend != "mujoco_playground":
         raise ValueError(
             f"Replay script only supports mujoco_playground artifacts, got env_backend={config.env_backend!r}."
@@ -93,7 +94,8 @@ def _rollout_trajectory(individual, config, *, key: jax.random.KeyArray):
 
     for _ in range(config.episode_horizon):
         obs = state.obs
-        action = apply_policy(policy_params, obs, is_discrete=is_discrete)
+        obs_in = normalize_obs(obs, obs_norm_state, clip=config.obs_norm_clip, eps=config.obs_norm_eps)
+        action = apply_policy(policy_params, obs_in, is_discrete=is_discrete)
         action = map_action_for_switch(action, gen, config)
         if is_discrete:
             action = jnp.asarray(action, dtype=jnp.int32)
@@ -172,6 +174,7 @@ def main() -> None:
         artifact["individual"],
         config,
         key=jax.random.key(args.seed),
+        obs_norm_state=artifact.get("obs_norm_state"),
     )
     frames = _render_frames(env, trajectory, width=args.width, height=args.height, camera=args.camera)
 

@@ -53,10 +53,12 @@ def main():
         final_state.pop,
         config,
         key=final_state.key,
+        obs_norm_state=final_state.obs_norm,
     )
     solution_artifact = build_solution_artifact(
         config=config,
         individual=best_individual,
+        obs_norm_state=final_state.obs_norm,
         best_index=best_index,
         best_fitness=best_fitness,
         population_fitness=population_fitness,
