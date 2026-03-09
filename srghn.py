@@ -22,8 +22,8 @@ class SRGHN(eqx.Module):
     encoder_policy: GraphEncoder
     stoch: StochasticHyper
     det: DeterministicHead
-    self_graph: GraphSpec = eqx.field(static=True)
-    policy_graph: GraphSpec = eqx.field(static=True)
+    self_graph: GraphSpec
+    policy_graph: GraphSpec
     self_spec: ParamNodeSpec = eqx.field(static=True)
     policy_spec: ParamNodeSpec = eqx.field(static=True)
     clip_params: tuple[float, float] = eqx.field(static=True)
