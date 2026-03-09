@@ -21,6 +21,8 @@ def main():
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--children-per-parent", type=int, default=None)
     parser.add_argument("--episodes-per-eval", type=int, default=None)
+    parser.add_argument("--parameter-block-size", type=int, default=None)
+    parser.add_argument("--mutation-block-ratio", type=float, default=None)
     args = parser.parse_args()
 
     config_kwargs = {
@@ -38,6 +40,10 @@ def main():
         config_kwargs["children_per_parent"] = args.children_per_parent
     if args.episodes_per_eval is not None:
         config_kwargs["episodes_per_eval"] = args.episodes_per_eval
+    if args.parameter_block_size is not None:
+        config_kwargs["parameter_block_size"] = args.parameter_block_size
+    if args.mutation_block_ratio is not None:
+        config_kwargs["mutation_block_ratio"] = args.mutation_block_ratio
 
     config = make_config_brax_generic(args.env_id, **config_kwargs)
     final_state, metrics = run_experiment(config)

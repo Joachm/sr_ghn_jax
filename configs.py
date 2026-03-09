@@ -17,6 +17,8 @@ class ExperimentConfig:
     gnn_steps_policy: int
     gnn_steps_self: int
     stoch_coeff_dim: int
+    parameter_block_size: int
+    mutation_block_ratio: float
     mutation_rate_head_dim: int
     clip_params: tuple[float, float]
     clip_std: tuple[float, float]
@@ -31,7 +33,11 @@ class ExperimentConfig:
     brax_backend: str | None
 
 
-def make_config_cartpole_switch() -> ExperimentConfig:
+def make_config_cartpole_switch(
+    *,
+    parameter_block_size: int = 64,
+    mutation_block_ratio: float = 0.125,
+) -> ExperimentConfig:
     return ExperimentConfig(
         task_name="cartpole_switch",
         seed=0,
@@ -45,6 +51,8 @@ def make_config_cartpole_switch() -> ExperimentConfig:
         gnn_steps_policy=10,
         gnn_steps_self=10,
         stoch_coeff_dim=32,
+        parameter_block_size=parameter_block_size,
+        mutation_block_ratio=mutation_block_ratio,
         mutation_rate_head_dim=5,
         clip_params=(-20.0, 20.0),
         clip_std=(0.0, 2.0),
@@ -60,7 +68,11 @@ def make_config_cartpole_switch() -> ExperimentConfig:
     )
 
 
-def make_config_ant_brax() -> ExperimentConfig:
+def make_config_ant_brax(
+    *,
+    parameter_block_size: int = 64,
+    mutation_block_ratio: float = 0.125,
+) -> ExperimentConfig:
     return ExperimentConfig(
         task_name="ant_brax",
         seed=0,
@@ -74,6 +86,8 @@ def make_config_ant_brax() -> ExperimentConfig:
         gnn_steps_policy=10,
         gnn_steps_self=10,
         stoch_coeff_dim=32,
+        parameter_block_size=parameter_block_size,
+        mutation_block_ratio=mutation_block_ratio,
         mutation_rate_head_dim=5,
         clip_params=(-20.0, 20.0),
         clip_std=(0.0, 2.0),
@@ -99,6 +113,8 @@ def make_config_gymnax_generic(
     children_per_parent: int = 2,
     episodes_per_eval: int = 1,
     child_factor: float = 0.0,
+    parameter_block_size: int = 64,
+    mutation_block_ratio: float = 0.125,
 ) -> ExperimentConfig:
     return ExperimentConfig(
         task_name="gymnax_generic",
@@ -113,6 +129,8 @@ def make_config_gymnax_generic(
         gnn_steps_policy=10,
         gnn_steps_self=10,
         stoch_coeff_dim=32,
+        parameter_block_size=parameter_block_size,
+        mutation_block_ratio=mutation_block_ratio,
         mutation_rate_head_dim=5,
         clip_params=(-20.0, 20.0),
         clip_std=(0.0, 2.0),
@@ -139,6 +157,8 @@ def make_config_brax_generic(
     episodes_per_eval: int = 1,
     child_factor: float = 0.0,
     brax_backend: str | None = None,
+    parameter_block_size: int = 64,
+    mutation_block_ratio: float = 0.125,
 ) -> ExperimentConfig:
     return ExperimentConfig(
         task_name="brax_generic",
@@ -153,6 +173,8 @@ def make_config_brax_generic(
         gnn_steps_policy=10,
         gnn_steps_self=10,
         stoch_coeff_dim=32,
+        parameter_block_size=parameter_block_size,
+        mutation_block_ratio=mutation_block_ratio,
         mutation_rate_head_dim=5,
         clip_params=(-20.0, 20.0),
         clip_std=(0.0, 2.0),
@@ -178,6 +200,8 @@ def make_config_mujoco_playground_generic(
     children_per_parent: int = 2,
     episodes_per_eval: int = 1,
     child_factor: float = 0.0,
+    parameter_block_size: int = 64,
+    mutation_block_ratio: float = 0.125,
 ) -> ExperimentConfig:
     return ExperimentConfig(
         task_name="mujoco_playground_generic",
@@ -192,6 +216,8 @@ def make_config_mujoco_playground_generic(
         gnn_steps_policy=10,
         gnn_steps_self=10,
         stoch_coeff_dim=32,
+        parameter_block_size=parameter_block_size,
+        mutation_block_ratio=mutation_block_ratio,
         mutation_rate_head_dim=5,
         clip_params=(-20.0, 20.0),
         clip_std=(0.0, 2.0),

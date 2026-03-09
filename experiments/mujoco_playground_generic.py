@@ -5,6 +5,7 @@ import pickle
 
 from configs import make_config_mujoco_playground_generic
 from experiments._common import run_experiment
+from solution_artifacts import build_solution_artifact, save_solution_artifact, select_best_individual
 
 
 def main():
@@ -20,6 +21,8 @@ def main():
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--children-per-parent", type=int, default=None)
     parser.add_argument("--episodes-per-eval", type=int, default=None)
+    parser.add_argument("--parameter-block-size", type=int, default=None)
+    parser.add_argument("--mutation-block-ratio", type=float, default=None)
     args = parser.parse_args()
 
     config_kwargs = {}
@@ -35,6 +38,10 @@ def main():
         config_kwargs["children_per_parent"] = args.children_per_parent
     if args.episodes_per_eval is not None:
         config_kwargs["episodes_per_eval"] = args.episodes_per_eval
+    if args.parameter_block_size is not None:
+        config_kwargs["parameter_block_size"] = args.parameter_block_size
+    if args.mutation_block_ratio is not None:
+        config_kwargs["mutation_block_ratio"] = args.mutation_block_ratio
 
     config = make_config_mujoco_playground_generic(args.env_id, **config_kwargs)
     final_state, metrics = run_experiment(config)
@@ -42,6 +49,21 @@ def main():
     out_name = f"mujoco_playground_{safe_env_id}_metrics.pkl"
     with open(out_name, "wb") as f:
         pickle.dump(metrics, f)
+    best_individual, best_index, best_fitness, population_fitness = select_best_individual(
+        final_state.pop,
+        config,
+        key=final_state.key,
+    )
+    solution_artifact = build_solution_artifact(
+        config=config,
+        individual=best_individual,
+        best_index=best_index,
+        best_fitness=best_fitness,
+        population_fitness=population_fitness,
+        metrics=metrics,
+    )
+    solution_name = f"mujoco_playground_{safe_env_id}_solution.pkl"
+    save_solution_artifact(solution_name, solution_artifact)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from math import ceil
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -24,23 +26,37 @@ class SRGHN(eqx.Module):
     clip_params: tuple[float, float] = eqx.field(static=True)
 
 
+def _num_blocks(size: int, block_size: int) -> int:
+    if size <= 0:
+        return 0
+    return ceil(size / block_size)
+
+
+def _dense_delta_from_blocks(
+    size: int,
+    block_size: int,
+    block_ids: jnp.ndarray,
+    block_updates: jnp.ndarray,
+    dtype,
+) -> jnp.ndarray:
+    if size <= 0:
+        return jnp.zeros((0,), dtype=dtype)
+
+    num_blocks = _num_blocks(size, block_size)
+    delta_blocks = jnp.zeros((num_blocks, block_size), dtype=dtype)
+    if block_ids.size:
+        delta_blocks = delta_blocks.at[block_ids].add(block_updates.astype(dtype))
+    return delta_blocks.reshape(-1)[:size]
+
+
 def make_policy(srghn: SRGHN) -> tuple[jnp.ndarray, ...]:
     h = srghn.encoder_policy(srghn.policy_node_emb, srghn.policy_graph)
     shapes = srghn.policy_spec.shapes
     sizes = srghn.policy_spec.sizes
-    num_nodes = srghn.policy_spec.num_nodes
-    max_size = srghn.policy_spec.max_size
-
-    def fori_body(i, out_mat):
-        vec = srghn.det(h[i], max_size)
-        return out_mat.at[i].set(vec)
-
-    out_mat = jnp.zeros((num_nodes, max_size), dtype=h.dtype)
-    out_mat = jax.lax.fori_loop(0, num_nodes, fori_body, out_mat)
 
     outputs = []
     for i, shape in enumerate(shapes):
-        vec = out_mat[i, : sizes[i]]
+        vec = srghn.det(h[i], sizes[i])
         outputs.append(vec.reshape(shape))
     return tuple(outputs)
 
@@ -55,20 +71,19 @@ def mutate(srghn: SRGHN, key: jax.random.KeyArray) -> SRGHN:
     sizes = srghn.self_spec.sizes
     shapes = srghn.self_spec.shapes
     num_nodes = srghn.self_spec.num_nodes
-    max_size = srghn.self_spec.max_size
 
     keys = jax.random.split(key, num_nodes)
 
-    def fori_body(i, out_mat):
-        upd, _ = srghn.stoch(h[i], max_size, keys[i])
-        return out_mat.at[i].set(upd)
-
-    out_mat = jnp.zeros((num_nodes, max_size), dtype=h.dtype)
-    out_mat = jax.lax.fori_loop(0, num_nodes, fori_body, out_mat)
-
     new_leaves = []
     for i, leaf in enumerate(leaves):
-        upd = out_mat[i, : sizes[i]]
+        block_ids, block_updates, _ = srghn.stoch(h[i], sizes[i], keys[i])
+        upd = _dense_delta_from_blocks(
+            sizes[i],
+            srghn.stoch.block_size,
+            block_ids,
+            block_updates,
+            leaf.dtype,
+        )
         new_leaf = leaf + upd.reshape(shapes[i])
         new_leaf = jnp.clip(new_leaf, srghn.clip_params[0], srghn.clip_params[1])
         new_leaves.append(new_leaf)

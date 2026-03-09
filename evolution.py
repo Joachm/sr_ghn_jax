@@ -69,7 +69,8 @@ def _init_single(key: jax.random.KeyArray, config, graphs, specs) -> SRGHN:
         in_dim=config.gnn_hidden_dim,
         hidden_dim=config.gnn_hidden_dim,
         coeff_dim=config.stoch_coeff_dim,
-        max_out=self_spec.max_size,
+        block_size=config.parameter_block_size,
+        mutation_block_ratio=config.mutation_block_ratio,
         mutation_rate_head_dim=config.mutation_rate_head_dim,
         clip_std=config.clip_std,
         clip_update=config.clip_update,
@@ -77,7 +78,12 @@ def _init_single(key: jax.random.KeyArray, config, graphs, specs) -> SRGHN:
         key=k_stoch,
     )
 
-    det = DeterministicHead(config.gnn_hidden_dim, policy_spec.max_size, key=k_det)
+    det = DeterministicHead(
+        config.gnn_hidden_dim,
+        config.gnn_hidden_dim,
+        config.parameter_block_size,
+        key=k_det,
+    )
 
     return SRGHN(
         self_node_emb=self_node_emb,
