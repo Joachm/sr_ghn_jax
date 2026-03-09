@@ -24,16 +24,17 @@ class EvoState:
     pop: SRGHN
     key: jax.random.KeyArray
     obs_norm: ObsNormState
+    pop_fitness: jnp.ndarray
 
     def tree_flatten(self):
-        children = (self.pop, self.key, self.obs_norm)
+        children = (self.pop, self.key, self.obs_norm, self.pop_fitness)
         aux_data = None
         return children, aux_data
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
-        pop, key, obs_norm = children
-        return cls(pop=pop, key=key, obs_norm=obs_norm)
+        pop, key, obs_norm, pop_fitness = children
+        return cls(pop=pop, key=key, obs_norm=obs_norm, pop_fitness=pop_fitness)
 
 
 def _unpack_graphs(graphs: Any) -> tuple[GraphSpec, GraphSpec]:
@@ -177,21 +178,33 @@ def evo_step(state: EvoState, gen: jnp.int32, config) -> tuple[EvoState, dict]:
     select_idx = jnp.argsort(selection_fitness)[-config.pop_size :]
     next_arr = jax.tree_util.tree_map(lambda x: x[select_idx], all_arr)
     next_pop = eqx.combine(next_arr, children_static)
-    next_obs_norm = update_obs_norm(
+    next_pop_fitness = all_fitness[select_idx]
+    updated_obs_norm = update_obs_norm(
         state.obs_norm,
         jnp.sum(all_obs_sum[select_idx], axis=0),
         jnp.sum(all_obs_sq_sum[select_idx], axis=0),
         jnp.sum(all_obs_count[select_idx], axis=0),
     )
+    is_last_gen = gen == jnp.asarray(config.num_generations - 1, dtype=gen.dtype)
+    next_obs_norm = jax.tree_util.tree_map(
+        lambda updated, current: jnp.where(is_last_gen, current, updated),
+        updated_obs_norm,
+        state.obs_norm,
+    )
 
-    return EvoState(pop=next_pop, key=key, obs_norm=next_obs_norm), metrics
+    return EvoState(pop=next_pop, key=key, obs_norm=next_obs_norm, pop_fitness=next_pop_fitness), metrics
 
 
 def run(key: jax.random.KeyArray, config, graphs, specs):
     key_init, key_loop = jax.random.split(key, 2)
     init_pop = init_population(key_init, config, graphs, specs)
     _, _, obs_dim, _, _, _, _, _ = make_env(config)
-    init_state = EvoState(pop=init_pop, key=key_loop, obs_norm=init_obs_norm(obs_dim))
+    init_state = EvoState(
+        pop=init_pop,
+        key=key_loop,
+        obs_norm=init_obs_norm(obs_dim),
+        pop_fitness=jnp.zeros((config.pop_size,), dtype=jnp.float32),
+    )
     gens = jnp.arange(config.num_generations, dtype=jnp.int32)
 
     def step_fn(state, gen):

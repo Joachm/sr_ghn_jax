@@ -50,6 +50,10 @@ def evaluate_population(
 
 def select_best_individual(pop, config, *, key: jax.random.KeyArray, gen: int | None = None, obs_norm_state=None):
     fitness = evaluate_population(pop, config, key=key, gen=gen, obs_norm_state=obs_norm_state)
+    return select_best_individual_from_fitness(pop, fitness)
+
+
+def select_best_individual_from_fitness(pop, fitness):
     best_index = int(jnp.argmax(fitness))
     best_fitness = float(fitness[best_index])
     best_individual = select_individual(pop, best_index)

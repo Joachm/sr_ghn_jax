@@ -5,7 +5,7 @@ import pickle
 
 from configs import make_config_mujoco_playground_generic
 from experiments._common import run_experiment
-from solution_artifacts import build_solution_artifact, save_solution_artifact, select_best_individual
+from solution_artifacts import build_solution_artifact, save_solution_artifact, select_best_individual_from_fitness
 
 
 def main():
@@ -49,11 +49,9 @@ def main():
     out_name = f"mujoco_playground_{safe_env_id}_metrics.pkl"
     with open(out_name, "wb") as f:
         pickle.dump(metrics, f)
-    best_individual, best_index, best_fitness, population_fitness = select_best_individual(
+    best_individual, best_index, best_fitness, population_fitness = select_best_individual_from_fitness(
         final_state.pop,
-        config,
-        key=final_state.key,
-        obs_norm_state=final_state.obs_norm,
+        final_state.pop_fitness,
     )
     solution_artifact = build_solution_artifact(
         config=config,
