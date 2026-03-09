@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 import shutil
 import subprocess
+from time import perf_counter
 
 import jax
 import jax.numpy as jnp
@@ -79,6 +80,14 @@ def _write_video_ffmpeg(frames: np.ndarray, output_path: Path, fps: int) -> None
         raise RuntimeError(stderr.decode("utf-8", errors="replace") or "ffmpeg failed to encode video.")
 
 
+def _extract_render_state(state):
+    if hasattr(state, "pipeline_state"):
+        return state.pipeline_state
+    if hasattr(state, "data"):
+        return state.data
+    return state
+
+
 def _rollout_trajectory(individual, config, *, key: jax.random.KeyArray, obs_norm_state=None):
     if config.env_backend != "mujoco_playground":
         raise ValueError(
@@ -87,12 +96,8 @@ def _rollout_trajectory(individual, config, *, key: jax.random.KeyArray, obs_nor
 
     env, _, _, _, is_discrete, action_shape, action_low, action_high = make_env(config)
     policy_params = make_policy(individual)
-    state = env.reset(key)
-    trajectory = [state]
-    total_reward = 0.0
-    gen = jnp.asarray(config.num_generations - 1, dtype=jnp.int32)
 
-    for _ in range(config.episode_horizon):
+    def step_fn(state):
         obs = state.obs
         obs_in = normalize_obs(obs, obs_norm_state, clip=config.obs_norm_clip, eps=config.obs_norm_eps)
         action = apply_policy(policy_params, obs_in, is_discrete=is_discrete)
@@ -103,11 +108,23 @@ def _rollout_trajectory(individual, config, *, key: jax.random.KeyArray, obs_nor
             action = action.reshape(action_shape)
             if action_low is not None:
                 action = action_low + (action + 1.0) * 0.5 * (action_high - action_low)
+        return env.step(state, action)
 
-        state = env.step(state, action)
-        trajectory.append(state)
-        total_reward += float(jnp.asarray(state.reward, dtype=jnp.float32))
-        if bool(jnp.asarray(state.done)):
+    step_jit = jax.jit(step_fn)
+    state = env.reset(key)
+    trajectory = [jax.device_get(_extract_render_state(state))]
+    total_reward = 0.0
+    gen = jnp.asarray(config.num_generations - 1, dtype=jnp.int32)
+
+    for step_idx in range(config.episode_horizon):
+        state = step_jit(state)
+        reward = float(jax.device_get(jnp.asarray(state.reward, dtype=jnp.float32)))
+        done = bool(jax.device_get(jnp.asarray(state.done)))
+        total_reward += reward
+        trajectory.append(jax.device_get(_extract_render_state(state)))
+        if (step_idx + 1) % 100 == 0:
+            print(f"[render] rollout step {step_idx + 1}/{config.episode_horizon}")
+        if done:
             break
 
     return env, trajectory, total_reward
@@ -117,31 +134,24 @@ def _render_frames(env, trajectory, *, width: int, height: int, camera: str | No
     if not hasattr(env, "render"):
         raise RuntimeError("Environment does not expose env.render(trajectory, ...).")
 
-    trajectory_candidates = [trajectory]
-    if trajectory and all(hasattr(state, "pipeline_state") for state in trajectory):
-        trajectory_candidates.append([state.pipeline_state for state in trajectory])
-    if trajectory and all(hasattr(state, "data") for state in trajectory):
-        trajectory_candidates.append([state.data for state in trajectory])
-
     render_kwargs = {"width": width, "height": height}
     if camera is not None:
         render_kwargs["camera"] = camera
 
     last_error = None
-    for candidate in trajectory_candidates:
-        try:
-            frames = env.render(candidate, **render_kwargs)
-            return _normalize_frames(frames)
-        except TypeError as exc:
-            last_error = exc
-            if "camera" in render_kwargs:
-                try:
-                    frames = env.render(candidate, width=width, height=height)
-                    return _normalize_frames(frames)
-                except Exception as inner_exc:
-                    last_error = inner_exc
-        except Exception as exc:
-            last_error = exc
+    try:
+        frames = env.render(trajectory, **render_kwargs)
+        return _normalize_frames(frames)
+    except TypeError as exc:
+        last_error = exc
+        if "camera" in render_kwargs:
+            try:
+                frames = env.render(trajectory, width=width, height=height)
+                return _normalize_frames(frames)
+            except Exception as inner_exc:
+                last_error = inner_exc
+    except Exception as exc:
+        last_error = exc
 
     raise RuntimeError(f"Failed to render trajectory via env.render(...): {last_error}") from last_error
 
@@ -170,16 +180,25 @@ def main() -> None:
     if args.episode_horizon is not None:
         config = config.__class__(**{**config.__dict__, "episode_horizon": args.episode_horizon})
 
+    t0 = perf_counter()
+    print("[render] rolling out trajectory...")
     env, trajectory, total_reward = _rollout_trajectory(
         artifact["individual"],
         config,
         key=jax.random.key(args.seed),
         obs_norm_state=artifact.get("obs_norm_state"),
     )
+    print(f"[render] rollout finished in {perf_counter() - t0:.1f}s with {len(trajectory)} states")
+    t1 = perf_counter()
+    print("[render] rendering frames...")
     frames = _render_frames(env, trajectory, width=args.width, height=args.height, camera=args.camera)
+    print(f"[render] rendering finished in {perf_counter() - t1:.1f}s with {frames.shape[0]} frames")
 
     output_path = Path(args.output) if args.output is not None else Path(args.solution).with_suffix(".mp4")
+    t2 = perf_counter()
+    print(f"[render] encoding mp4 to {output_path}...")
     _write_video_ffmpeg(frames, output_path, args.fps)
+    print(f"[render] encoding finished in {perf_counter() - t2:.1f}s")
     print(
         f"Wrote {output_path} with {frames.shape[0]} frames at {args.fps} fps. "
         f"Episode return: {total_reward:.3f}"

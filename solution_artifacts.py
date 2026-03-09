@@ -82,11 +82,16 @@ def build_solution_artifact(
     }
 
 
+def materialize_host_tree(tree):
+    return jax.device_get(tree)
+
+
 def save_solution_artifact(path: str | Path, artifact: dict[str, Any]) -> None:
     out_path = Path(path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    host_artifact = materialize_host_tree(artifact)
     with out_path.open("wb") as f:
-        pickle.dump(artifact, f)
+        pickle.dump(host_artifact, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 
 def load_solution_artifact(path: str | Path) -> dict[str, Any]:
