@@ -3,11 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Tuple
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 
 from evolution import run_jit
-from graphs import GraphSpec, make_chain_graph
+from graphs import GraphSpec, make_chain_graph, make_policy_hierarchical_graph, make_self_hierarchical_graph
 from gnn import GraphEncoder
 from hypernets import DeterministicHead, StochasticHyper
 from specs import ParamNodeSpec, policy_spec_for_task, srghn_self_spec
@@ -30,9 +31,18 @@ def _build_template_srghn(num_self_nodes: int, policy_spec: ParamNodeSpec, confi
     if config.embedding_dim != config.gnn_hidden_dim:
         raise ValueError("config.embedding_dim must equal config.gnn_hidden_dim.")
 
-    key, k_self_emb, k_policy_emb, k_enc_self, k_enc_pol, k_stoch, k_det = jax.random.split(key, 7)
-    self_node_emb = jax.random.normal(k_self_emb, (num_self_nodes, config.embedding_dim))
-    policy_node_emb = jax.random.normal(k_policy_emb, (policy_spec.num_nodes, config.embedding_dim))
+    key, k_self_emb, k_self_ctx, k_policy_emb, k_self_feat, k_policy_feat, k_enc_self, k_enc_pol, k_stoch, k_det = (
+        jax.random.split(key, 10)
+    )
+    self_node_emb = 0.1 * jax.random.normal(k_self_emb, (num_self_nodes, config.embedding_dim))
+    self_context_emb = 0.1 * jax.random.normal(k_self_ctx, (config.embedding_dim,))
+    policy_node_emb = 0.1 * jax.random.normal(k_policy_emb, (policy_spec.num_nodes, config.embedding_dim))
+    self_feat_proj = eqx.nn.Linear(
+        len(policy_spec.node_features[0]), config.gnn_hidden_dim, use_bias=True, key=k_self_feat
+    )
+    policy_feat_proj = eqx.nn.Linear(
+        len(policy_spec.node_features[0]), config.gnn_hidden_dim, use_bias=True, key=k_policy_feat
+    )
 
     encoder_self = GraphEncoder(config.gnn_hidden_dim, config.gnn_steps_self, key=k_enc_self)
     encoder_policy = GraphEncoder(config.gnn_hidden_dim, config.gnn_steps_policy, key=k_enc_pol)
@@ -59,14 +69,17 @@ def _build_template_srghn(num_self_nodes: int, policy_spec: ParamNodeSpec, confi
 
     return SRGHN(
         self_node_emb=self_node_emb,
+        self_context_emb=self_context_emb,
         policy_node_emb=policy_node_emb,
+        self_feat_proj=self_feat_proj,
+        policy_feat_proj=policy_feat_proj,
         encoder_self=encoder_self,
         encoder_policy=encoder_policy,
         stoch=stoch,
         det=det,
         self_graph=make_chain_graph(num_self_nodes, bidir=True),
-        policy_graph=make_chain_graph(policy_spec.num_nodes, bidir=True),
-        self_spec=ParamNodeSpec((), (), 0, 0),
+        policy_graph=make_policy_hierarchical_graph(policy_spec.group_ids, bidir=True),
+        self_spec=ParamNodeSpec((), (), 0, 0, (), (), (), None),
         policy_spec=policy_spec,
         clip_params=config.clip_params,
     )
@@ -84,8 +97,13 @@ def build_graphs_and_specs(config) -> tuple[GraphBundle, SpecBundle]:
     self_spec = srghn_self_spec(final_srghn)
 
     graphs = GraphBundle(
-        self_graph=make_chain_graph(self_spec.num_nodes, bidir=True),
-        policy_graph=make_chain_graph(policy_spec.num_nodes, bidir=True),
+        self_graph=make_self_hierarchical_graph(
+            self_spec.group_ids,
+            self_spec.parent_ids,
+            context_index=self_spec.context_index,
+            bidir=True,
+        ),
+        policy_graph=make_policy_hierarchical_graph(policy_spec.group_ids, bidir=True),
     )
     specs = SpecBundle(self_spec=self_spec, policy_spec=policy_spec)
     return graphs, specs

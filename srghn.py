@@ -14,7 +14,10 @@ from specs import ParamNodeSpec, _srghn_filter_spec
 
 class SRGHN(eqx.Module):
     self_node_emb: jnp.ndarray
+    self_context_emb: jnp.ndarray
     policy_node_emb: jnp.ndarray
+    self_feat_proj: eqx.nn.Linear
+    policy_feat_proj: eqx.nn.Linear
     encoder_self: GraphEncoder
     encoder_policy: GraphEncoder
     stoch: StochasticHyper
@@ -49,8 +52,27 @@ def _dense_delta_from_blocks(
     return delta_blocks.reshape(-1)[:size]
 
 
+def _node_inputs(
+    spec: ParamNodeSpec,
+    node_offset: jnp.ndarray,
+    feat_proj: eqx.nn.Linear,
+    *,
+    context_index: int | None = None,
+    context_emb: jnp.ndarray | None = None,
+) -> jnp.ndarray:
+    if spec.num_nodes == 0:
+        return node_offset
+    features = jnp.asarray(spec.node_features, dtype=node_offset.dtype)
+    projected = jax.vmap(feat_proj)(features)
+    inputs = projected + node_offset
+    if context_index is not None and context_emb is not None:
+        inputs = inputs.at[context_index].add(context_emb.astype(inputs.dtype))
+    return inputs
+
+
 def make_policy(srghn: SRGHN) -> tuple[jnp.ndarray, ...]:
-    h = srghn.encoder_policy(srghn.policy_node_emb, srghn.policy_graph)
+    h0 = _node_inputs(srghn.policy_spec, srghn.policy_node_emb, srghn.policy_feat_proj)
+    h = srghn.encoder_policy(h0, srghn.policy_graph)
     shapes = srghn.policy_spec.shapes
     sizes = srghn.policy_spec.sizes
 
@@ -62,7 +84,14 @@ def make_policy(srghn: SRGHN) -> tuple[jnp.ndarray, ...]:
 
 
 def mutate(srghn: SRGHN, key: jax.random.KeyArray) -> SRGHN:
-    h = srghn.encoder_self(srghn.self_node_emb, srghn.self_graph)
+    h0 = _node_inputs(
+        srghn.self_spec,
+        srghn.self_node_emb,
+        srghn.self_feat_proj,
+        context_index=srghn.self_spec.context_index,
+        context_emb=srghn.self_context_emb,
+    )
+    h = srghn.encoder_self(h0, srghn.self_graph)
     filter_spec = _srghn_filter_spec(srghn)
     arr_tree, static_tree = eqx.partition(srghn, filter_spec)
     flat, treedef = jax.tree_util.tree_flatten(arr_tree)
@@ -72,11 +101,16 @@ def mutate(srghn: SRGHN, key: jax.random.KeyArray) -> SRGHN:
     shapes = srghn.self_spec.shapes
     num_nodes = srghn.self_spec.num_nodes
 
-    keys = jax.random.split(key, num_nodes)
+    context_idx = srghn.self_spec.context_index
+    if context_idx is None:
+        raise ValueError("self_spec.context_index must be set for self mutation.")
+
+    keys = jax.random.split(key, num_nodes + 1)
+    child_ctx = srghn.stoch.sample_child_context(h[context_idx], keys[0])
 
     new_leaves = []
     for i, leaf in enumerate(leaves):
-        block_ids, block_updates, _ = srghn.stoch(h[i], sizes[i], keys[i])
+        block_ids, block_updates, _ = srghn.stoch(h[i], child_ctx, sizes[i], keys[i + 1])
         upd = _dense_delta_from_blocks(
             sizes[i],
             srghn.stoch.block_size,

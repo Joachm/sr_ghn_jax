@@ -55,6 +55,9 @@ def _block_position_features(num_blocks: int, block_size: int, out_dim: int, dty
 
 class StochasticHyper(eqx.Module):
     trunk: _Trunk
+    global_proj: eqx.nn.Linear
+    child_mu_head: eqx.nn.Linear
+    child_logstd_head: eqx.nn.Linear
     pos_proj: eqx.nn.Linear
     block_proj: eqx.nn.Linear
     score_head: eqx.nn.Linear
@@ -81,8 +84,13 @@ class StochasticHyper(eqx.Module):
         *,
         key: jax.random.KeyArray,
     ):
-        k_trunk, k_pos, k_block, k_score, k_std, k_lr, k_basis = jax.random.split(key, 7)
+        k_trunk, k_global, k_child_mu, k_child_std, k_pos, k_block, k_score, k_std, k_lr, k_basis = (
+            jax.random.split(key, 10)
+        )
         self.trunk = _Trunk(in_dim, hidden_dim, key=k_trunk)
+        self.global_proj = eqx.nn.Linear(hidden_dim, hidden_dim, use_bias=True, key=k_global)
+        self.child_mu_head = eqx.nn.Linear(hidden_dim, hidden_dim, use_bias=True, key=k_child_mu)
+        self.child_logstd_head = eqx.nn.Linear(hidden_dim, hidden_dim, use_bias=True, key=k_child_std)
         self.pos_proj = eqx.nn.Linear(6, hidden_dim, use_bias=True, key=k_pos)
         self.block_proj = eqx.nn.Linear(hidden_dim, hidden_dim, use_bias=True, key=k_block)
         self.score_head = eqx.nn.Linear(hidden_dim, 1, use_bias=True, key=k_score)
@@ -96,9 +104,17 @@ class StochasticHyper(eqx.Module):
         self.clip_update = clip_update
         self.const_noise_std = const_noise_std
 
+    def sample_child_context(self, h_ctx: jnp.ndarray, key: jax.random.KeyArray) -> jnp.ndarray:
+        mu = self.child_mu_head(h_ctx)
+        log_std = jnp.clip(self.child_logstd_head(h_ctx), -4.0, 1.0)
+        std = jnp.exp(log_std)
+        eps = jax.random.normal(key, mu.shape, dtype=mu.dtype)
+        return mu + eps * std
+
     def __call__(
         self,
         h_i: jnp.ndarray,
+        child_ctx: jnp.ndarray,
         out_dim: int,
         key: jax.random.KeyArray,
     ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
@@ -108,7 +124,9 @@ class StochasticHyper(eqx.Module):
             empty_updates = jnp.zeros((0, self.block_size), dtype=h_i.dtype)
             return empty_ids, empty_updates, jnp.asarray(0.0, dtype=h_i.dtype)
 
-        x = self.trunk(h_i)
+        local_x = self.trunk(h_i)
+        global_x = jax.nn.tanh(self.global_proj(child_ctx))
+        x = jax.nn.relu(local_x + global_x)
         num_blocks = _num_blocks(out_dim, self.block_size)
         pos_features = _block_position_features(num_blocks, self.block_size, out_dim, x.dtype)
         pos_ctx = jax.vmap(self.pos_proj)(pos_features)

@@ -57,10 +57,17 @@ def _init_single(key: jax.random.KeyArray, config, graphs, specs) -> SRGHN:
     if config.embedding_dim != config.gnn_hidden_dim:
         raise ValueError("config.embedding_dim must equal config.gnn_hidden_dim.")
 
-    key, k_self_emb, k_policy_emb, k_enc_self, k_enc_pol, k_stoch, k_det = jax.random.split(key, 7)
+    key, k_self_emb, k_self_ctx, k_policy_emb, k_self_feat, k_policy_feat, k_enc_self, k_enc_pol, k_stoch, k_det = (
+        jax.random.split(key, 10)
+    )
 
-    self_node_emb = jax.random.normal(k_self_emb, (self_spec.num_nodes, config.embedding_dim))
-    policy_node_emb = jax.random.normal(k_policy_emb, (policy_spec.num_nodes, config.embedding_dim))
+    self_node_emb = 0.1 * jax.random.normal(k_self_emb, (self_spec.num_nodes, config.embedding_dim))
+    self_context_emb = 0.1 * jax.random.normal(k_self_ctx, (config.embedding_dim,))
+    policy_node_emb = 0.1 * jax.random.normal(k_policy_emb, (policy_spec.num_nodes, config.embedding_dim))
+    self_feat_proj = eqx.nn.Linear(len(self_spec.node_features[0]), config.gnn_hidden_dim, use_bias=True, key=k_self_feat)
+    policy_feat_proj = eqx.nn.Linear(
+        len(policy_spec.node_features[0]), config.gnn_hidden_dim, use_bias=True, key=k_policy_feat
+    )
 
     encoder_self = GraphEncoder(config.gnn_hidden_dim, config.gnn_steps_self, key=k_enc_self)
     encoder_policy = GraphEncoder(config.gnn_hidden_dim, config.gnn_steps_policy, key=k_enc_pol)
@@ -87,7 +94,10 @@ def _init_single(key: jax.random.KeyArray, config, graphs, specs) -> SRGHN:
 
     return SRGHN(
         self_node_emb=self_node_emb,
+        self_context_emb=self_context_emb,
         policy_node_emb=policy_node_emb,
+        self_feat_proj=self_feat_proj,
+        policy_feat_proj=policy_feat_proj,
         encoder_self=encoder_self,
         encoder_policy=encoder_policy,
         stoch=stoch,
