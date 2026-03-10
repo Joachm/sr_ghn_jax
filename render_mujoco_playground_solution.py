@@ -8,6 +8,7 @@ from time import perf_counter
 
 import jax
 import jax.numpy as jnp
+import mujoco
 import numpy as np
 
 from envs import make_env, map_action_for_switch
@@ -15,6 +16,129 @@ from obs_norm import normalize_obs
 from policy import apply_policy
 from solution_artifacts import load_solution_artifact
 from srghn import make_policy
+
+
+def _available_camera_names(env) -> list[str]:
+    model = getattr(env, "mj_model", None) or getattr(env, "_mj_model", None) or getattr(env, "model", None)
+    if model is None or not hasattr(model, "ncam") or not hasattr(model, "name_camadr") or not hasattr(model, "names"):
+        return []
+
+    names: list[str] = []
+    for i in range(int(model.ncam)):
+        start = int(model.name_camadr[i])
+        raw_name = model.names[start:]
+        if isinstance(raw_name, memoryview):
+            raw_name = raw_name.tobytes()
+        if isinstance(raw_name, str):
+            name = raw_name.split("\x00", 1)[0]
+        else:
+            name = bytes(raw_name).split(b"\x00", 1)[0].decode("utf-8", "ignore")
+        names.append(name)
+    return names
+
+
+def _choose_camera(env, requested: str | None) -> str | None:
+    camera_names = _available_camera_names(env)
+    if requested is not None:
+        return requested
+    if not camera_names:
+        return None
+
+    preferred = ("track", "tracking", "follow", "close", "side", "run")
+    lowered = {name.lower(): name for name in camera_names}
+    for token in preferred:
+        for lowered_name, original_name in lowered.items():
+            if token in lowered_name:
+                print(f"[render] auto-selected camera {original_name!r}")
+                return original_name
+
+    if camera_names and any(name for name in camera_names):
+        print(f"[render] available cameras: {', '.join(repr(name) for name in camera_names)}")
+    return None
+
+
+def _body_names(model) -> list[str]:
+    if not hasattr(model, "nbody") or not hasattr(model, "name_bodyadr") or not hasattr(model, "names"):
+        return []
+    names: list[str] = []
+    for i in range(int(model.nbody)):
+        start = int(model.name_bodyadr[i])
+        raw_name = model.names[start:]
+        if isinstance(raw_name, memoryview):
+            raw_name = raw_name.tobytes()
+        if isinstance(raw_name, str):
+            name = raw_name.split("\x00", 1)[0]
+        else:
+            name = bytes(raw_name).split(b"\x00", 1)[0].decode("utf-8", "ignore")
+        names.append(name)
+    return names
+
+
+def _default_track_body_id(model) -> int:
+    body_names = _body_names(model)
+    if not body_names:
+        return -1
+    preferred = ("torso", "trunk", "pelvis", "body", "root", "base")
+    for token in preferred:
+        for idx, name in enumerate(body_names):
+            if idx == 0:
+                continue
+            if token in name.lower():
+                return idx
+    return 1 if len(body_names) > 1 else -1
+
+
+def _should_use_tracking_camera(config, camera: str | None) -> bool:
+    if camera is not None:
+        return False
+    env_id = str(getattr(config, "env_id", "")).lower()
+    return "cheetah" in env_id
+
+
+def _tracking_camera(model) -> mujoco.MjvCamera:
+    cam = mujoco.MjvCamera()
+    mujoco.mjv_defaultFreeCamera(model, cam)
+    cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
+    cam.trackbodyid = _default_track_body_id(model)
+    cam.distance = max(float(model.stat.extent) * 1.5, 2.5)
+    cam.azimuth = 90.0
+    cam.elevation = -12.0
+    cam.lookat[:] = 0.0
+    return cam
+
+
+def _state_to_mjdata(model, state):
+    data = mujoco.MjData(model)
+    state_data = getattr(state, "data", None)
+    if state_data is None:
+        raise ValueError("Wrapped environment state is missing `.data`, which is required for tracked rendering.")
+    data.qpos[:] = np.asarray(jax.device_get(state_data.qpos))
+    data.qvel[:] = np.asarray(jax.device_get(state_data.qvel))
+    if hasattr(state_data, "act") and data.act.size:
+        data.act[:] = np.asarray(jax.device_get(state_data.act))
+    if hasattr(state_data, "mocap_pos") and data.mocap_pos.size:
+        data.mocap_pos[:] = np.asarray(jax.device_get(state_data.mocap_pos))
+    if hasattr(state_data, "mocap_quat") and data.mocap_quat.size:
+        data.mocap_quat[:] = np.asarray(jax.device_get(state_data.mocap_quat))
+    mujoco.mj_forward(model, data)
+    return data
+
+
+def _render_frames_tracking(env, trajectory, *, width: int, height: int) -> np.ndarray:
+    model = getattr(env, "mj_model", None) or getattr(env, "_mj_model", None) or getattr(env, "model", None)
+    if model is None:
+        raise RuntimeError("Unable to access MuJoCo model for tracked rendering.")
+    camera = _tracking_camera(model)
+    renderer = mujoco.Renderer(model, height=height, width=width)
+    frames = []
+    for idx, state in enumerate(trajectory):
+        data = _state_to_mjdata(model, state)
+        renderer.update_scene(data, camera=camera)
+        frames.append(renderer.render().copy())
+        if (idx + 1) % 100 == 0:
+            print(f"[render] rendered frame {idx + 1}/{len(trajectory)} (tracking camera)")
+    renderer.close()
+    return _normalize_frames(np.stack(frames, axis=0))
 
 
 def _normalize_frames(frames) -> np.ndarray:
@@ -122,9 +246,15 @@ def _rollout_trajectory(individual, config, *, key: jax.random.KeyArray, obs_nor
     return env, trajectory, total_reward
 
 
-def _render_frames(env, trajectory, *, width: int, height: int, camera: str | None):
+def _render_frames(env, trajectory, *, config, width: int, height: int, camera: str | None):
     if not hasattr(env, "render"):
         raise RuntimeError("Environment does not expose env.render(trajectory, ...).")
+
+    if _should_use_tracking_camera(config, camera):
+        try:
+            return _render_frames_tracking(env, trajectory, width=width, height=height)
+        except Exception as exc:
+            print(f"[render] tracking camera fallback failed, falling back to env.render(...): {exc}")
 
     trajectory_candidates = [trajectory]
     if trajectory and all(hasattr(state, "pipeline_state") for state in trajectory):
@@ -170,6 +300,11 @@ def main() -> None:
     parser.add_argument("--height", type=int, default=480, help="Render height in pixels.")
     parser.add_argument("--camera", default=None, help="Optional camera name passed through to env.render.")
     parser.add_argument(
+        "--list-cameras",
+        action="store_true",
+        help="List available camera names for the environment and exit.",
+    )
+    parser.add_argument(
         "--episode-horizon",
         type=int,
         default=None,
@@ -190,10 +325,16 @@ def main() -> None:
         key=jax.random.key(args.seed),
         obs_norm_state=artifact.get("obs_norm_state"),
     )
+    camera_names = _available_camera_names(env)
+    if camera_names:
+        print(f"[render] available cameras: {', '.join(repr(name) for name in camera_names)}")
+    if args.list_cameras:
+        return
+    camera = _choose_camera(env, args.camera)
     print(f"[render] rollout finished in {perf_counter() - t0:.1f}s with {len(trajectory)} states")
     t1 = perf_counter()
     print("[render] rendering frames...")
-    frames = _render_frames(env, trajectory, width=args.width, height=args.height, camera=args.camera)
+    frames = _render_frames(env, trajectory, config=config, width=args.width, height=args.height, camera=camera)
     print(f"[render] rendering finished in {perf_counter() - t1:.1f}s with {frames.shape[0]} frames")
 
     output_path = Path(args.output) if args.output is not None else Path(args.solution).with_suffix(".mp4")
