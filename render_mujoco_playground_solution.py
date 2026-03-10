@@ -80,14 +80,6 @@ def _write_video_ffmpeg(frames: np.ndarray, output_path: Path, fps: int) -> None
         raise RuntimeError(stderr.decode("utf-8", errors="replace") or "ffmpeg failed to encode video.")
 
 
-def _extract_render_state(state):
-    if hasattr(state, "pipeline_state"):
-        return state.pipeline_state
-    if hasattr(state, "data"):
-        return state.data
-    return state
-
-
 def _rollout_trajectory(individual, config, *, key: jax.random.KeyArray, obs_norm_state=None):
     if config.env_backend != "mujoco_playground":
         raise ValueError(
@@ -112,7 +104,7 @@ def _rollout_trajectory(individual, config, *, key: jax.random.KeyArray, obs_nor
 
     step_jit = jax.jit(step_fn)
     state = env.reset(key)
-    trajectory = [jax.device_get(_extract_render_state(state))]
+    trajectory = [jax.device_get(state)]
     total_reward = 0.0
     gen = jnp.asarray(config.num_generations - 1, dtype=jnp.int32)
 
@@ -121,7 +113,7 @@ def _rollout_trajectory(individual, config, *, key: jax.random.KeyArray, obs_nor
         reward = float(jax.device_get(jnp.asarray(state.reward, dtype=jnp.float32)))
         done = bool(jax.device_get(jnp.asarray(state.done)))
         total_reward += reward
-        trajectory.append(jax.device_get(_extract_render_state(state)))
+        trajectory.append(jax.device_get(state))
         if (step_idx + 1) % 100 == 0:
             print(f"[render] rollout step {step_idx + 1}/{config.episode_horizon}")
         if done:
@@ -134,24 +126,34 @@ def _render_frames(env, trajectory, *, width: int, height: int, camera: str | No
     if not hasattr(env, "render"):
         raise RuntimeError("Environment does not expose env.render(trajectory, ...).")
 
+    trajectory_candidates = [trajectory]
+    if trajectory and all(hasattr(state, "pipeline_state") for state in trajectory):
+        trajectory_candidates.append([state.pipeline_state for state in trajectory])
+    if trajectory and all(hasattr(state, "data") for state in trajectory):
+        trajectory_candidates.append([state.data for state in trajectory])
+
     render_kwargs = {"width": width, "height": height}
     if camera is not None:
         render_kwargs["camera"] = camera
 
     last_error = None
-    try:
-        frames = env.render(trajectory, **render_kwargs)
-        return _normalize_frames(frames)
-    except TypeError as exc:
-        last_error = exc
-        if "camera" in render_kwargs:
-            try:
-                frames = env.render(trajectory, width=width, height=height)
-                return _normalize_frames(frames)
-            except Exception as inner_exc:
-                last_error = inner_exc
-    except Exception as exc:
-        last_error = exc
+    for candidate in trajectory_candidates:
+        try:
+            frames = env.render(candidate, **render_kwargs)
+            return _normalize_frames(frames)
+        except TypeError as exc:
+            last_error = exc
+            if "camera" in render_kwargs:
+                try:
+                    frames = env.render(candidate, width=width, height=height)
+                    return _normalize_frames(frames)
+                except Exception as inner_exc:
+                    last_error = inner_exc
+        except Exception as exc:
+            last_error = exc
+            # Some MuJoCo Playground envs require the full wrapped state rather than
+            # bare MJX pipeline/data objects; fall through and try the next candidate.
+            continue
 
     raise RuntimeError(f"Failed to render trajectory via env.render(...): {last_error}") from last_error
 
