@@ -207,11 +207,11 @@ def make_config_mujoco_playground_generic(
     pop_size: int = 200,
     num_generations: int = 5000,
     episode_horizon: int = 1000,
-    children_per_parent: int = 2,
+    children_per_parent: int = 8,
     episodes_per_eval: int = 1,
     child_factor: float = 0.0,
-    parameter_block_size: int = 64,
-    mutation_block_ratio: float = 0.125,
+    parameter_block_size: int = 4096,
+    mutation_block_ratio: float = 0.5,
 ) -> ExperimentConfig:
     return ExperimentConfig(
         task_name="mujoco_playground_generic",

@@ -316,7 +316,7 @@ def policy_spec_for_task(config) -> ParamNodeSpec:
         env = _load_mujoco_playground_env(config.env_id)
         obs_dim = _infer_obs_dim(env)
         act_dim = _infer_action_dim(env)
-        shapes = _mlp_param_shapes(obs_dim, (32, 32, 32), act_dim)
+        shapes = _mlp_param_shapes(obs_dim, (64, 64, 64), act_dim)
     else:
         raise ValueError(f"Unknown task_name: {config.task_name}")
 
