@@ -225,7 +225,12 @@ def apply_reward_shifts(
             else:
                 candidate = -jnp.abs(progress - jnp.asarray(window.target_value, dtype=progress.dtype))
             out = jnp.where(active, candidate.astype(out.dtype), out)
-        elif window.rule == "cartpole_flip":
+        elif window.rule in {
+            "cartpole_flip",
+            "discrete_reverse",
+            "continuous_action_flip",
+            "pendulum_obs_flip",
+        }:
             continue
         else:
             raise ValueError(f"Unknown shift rule: {window.rule}")

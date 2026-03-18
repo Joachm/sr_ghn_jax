@@ -96,6 +96,14 @@ class AdaptationTests(unittest.TestCase):
         self.assertAlmostEqual(float(shifted_obs[1]), 0.8, places=5)
         self.assertAlmostEqual(float(shifted_obs[2]), -1.5, places=5)
 
+        reward_passthrough = apply_reward_shifts(
+            jnp.asarray(1.25, dtype=jnp.float32),
+            DummyState(),
+            jnp.asarray(2),
+            discrete_config,
+        )
+        self.assertAlmostEqual(float(reward_passthrough), 1.25, places=5)
+
     def test_suite_windows_have_two_switches(self):
         for env_id in (
             "CartPole-v1",

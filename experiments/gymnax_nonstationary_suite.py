@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import traceback
 
 from adaptation_analysis import build_run_artifact, save_pickle
 from configs import make_config_nonstationary_gymnax
@@ -41,6 +42,7 @@ def main():
     seeds = args.seeds or list(range(10))
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    failure_log = output_dir / "failures.log"
 
     for env_id in ENVIRONMENTS:
         env_dir = output_dir / _safe_name(env_id)
@@ -68,10 +70,17 @@ def main():
                 fixed_mutation_lr=args.fixed_mutation_lr,
             )
             print(f"[run] env={env_id} seed={seed}")
-            _, metrics = run_experiment(config)
-            artifact = build_run_artifact(config, metrics)
-            save_pickle(out_path, artifact)
-            print(f"[saved] {out_path}")
+            try:
+                _, metrics = run_experiment(config)
+                artifact = build_run_artifact(config, metrics)
+                save_pickle(out_path, artifact)
+                print(f"[saved] {out_path}")
+            except Exception:
+                tb = traceback.format_exc()
+                message = f"[failed] env={env_id} seed={seed}\n{tb}\n"
+                print(message, flush=True)
+                with failure_log.open("a", encoding="utf-8") as f:
+                    f.write(message)
 
 
 if __name__ == "__main__":
