@@ -309,8 +309,6 @@ def policy_spec_for_task(config) -> ParamNodeSpec:
         obs_dim = int(env.observation_size)
         act_dim = int(env.action_size)
         shapes = _mlp_param_shapes(obs_dim, (32, 32, 32), act_dim)
-    elif task == "lunarlander_switch":
-        raise ValueError("LunarLander policy spec is not defined in the reference.")
     elif task == "gymnax_generic":
         import gymnax
 
@@ -323,7 +321,7 @@ def policy_spec_for_task(config) -> ParamNodeSpec:
             act_dim = int(action_space.n)
         else:
             act_dim = int(prod(action_space.shape))
-        shapes = _mlp_param_shapes(obs_dim, (32,), act_dim)
+        shapes = _mlp_param_shapes(obs_dim, (32,32), act_dim)
     elif task == "mujoco_playground_generic":
         env = _load_mujoco_playground_env(config.env_id)
         obs_dim = _infer_obs_dim(env)
