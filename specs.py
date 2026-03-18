@@ -17,6 +17,7 @@ class ParamNodeSpec:
     max_size: int
     num_nodes: int
     node_features: tuple[tuple[float, ...], ...]
+    module_names: tuple[str, ...]
     group_ids: tuple[int, ...]
     parent_ids: tuple[int, ...]
     context_index: int | None
@@ -29,6 +30,7 @@ class ParamNodeSpec:
             self.max_size,
             self.num_nodes,
             self.node_features,
+            self.module_names,
             self.group_ids,
             self.parent_ids,
             self.context_index,
@@ -37,13 +39,14 @@ class ParamNodeSpec:
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
-        shapes, sizes, max_size, num_nodes, node_features, group_ids, parent_ids, context_index = aux_data
+        shapes, sizes, max_size, num_nodes, node_features, module_names, group_ids, parent_ids, context_index = aux_data
         return cls(
             shapes=shapes,
             sizes=sizes,
             max_size=max_size,
             num_nodes=num_nodes,
             node_features=node_features,
+            module_names=module_names,
             group_ids=group_ids,
             parent_ids=parent_ids,
             context_index=context_index,
@@ -139,7 +142,14 @@ def _key_token_name(key) -> str:
 
 def _self_metadata(
     path_leaves: Sequence[tuple[tuple[object, ...], jnp.ndarray]],
-) -> tuple[tuple[tuple[float, ...], ...], tuple[int, ...], tuple[int, ...], tuple[tuple[int, ...], ...], int | None]:
+) -> tuple[
+    tuple[tuple[float, ...], ...],
+    tuple[str, ...],
+    tuple[int, ...],
+    tuple[int, ...],
+    tuple[tuple[int, ...], ...],
+    int | None,
+]:
     entries: list[tuple[tuple[str, ...], tuple[int, ...]]] = []
     for path, leaf in path_leaves:
         if leaf is None or not eqx.is_array(leaf):
@@ -161,6 +171,7 @@ def _self_metadata(
 
     num_top_groups = max(len(top_level_ids), 1)
     features = []
+    module_names = []
     group_ids = []
     parent_ids = []
     shapes = []
@@ -192,13 +203,14 @@ def _self_metadata(
                 group_norm=group_norm,
             )
         )
+        module_names.append(top_name)
         group_ids.append(top_id)
         parent_ids.append(parent_id)
         shapes.append(shape)
         if top_name == "self_context_emb":
             context_index = len(shapes) - 1
 
-    return tuple(features), tuple(group_ids), tuple(parent_ids), tuple(shapes), context_index
+    return tuple(features), tuple(module_names), tuple(group_ids), tuple(parent_ids), tuple(shapes), context_index
 
 
 def _linear_param_shapes(layer_in: int, layer_out: int) -> Sequence[tuple[int, ...]]:
@@ -329,6 +341,7 @@ def policy_spec_for_task(config) -> ParamNodeSpec:
         max_size=max_size,
         num_nodes=len(shapes),
         node_features=node_features,
+        module_names=("policy",) * len(shapes),
         group_ids=group_ids,
         parent_ids=parent_ids,
         context_index=None,
@@ -355,7 +368,7 @@ def srghn_self_spec(srghn_module: eqx.Module) -> ParamNodeSpec:
     filter_spec = _srghn_filter_spec(srghn_module)
     filtered = eqx.filter(srghn_module, filter_spec)
     path_leaves, _ = jax.tree_util.tree_flatten_with_path(filtered)
-    node_features, group_ids, parent_ids, shapes, context_index = _self_metadata(path_leaves)
+    node_features, module_names, group_ids, parent_ids, shapes, context_index = _self_metadata(path_leaves)
     sizes = _sizes_from_shapes(shapes)
     max_size = max(sizes) if sizes else 0
     return ParamNodeSpec(
@@ -364,6 +377,7 @@ def srghn_self_spec(srghn_module: eqx.Module) -> ParamNodeSpec:
         max_size=max_size,
         num_nodes=len(shapes),
         node_features=node_features,
+        module_names=module_names,
         group_ids=group_ids,
         parent_ids=parent_ids,
         context_index=context_index,

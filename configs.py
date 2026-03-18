@@ -4,6 +4,20 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
+class ShiftWindowConfig:
+    start_gen: int
+    end_gen: int | None
+    rule: str
+    target_value: float = 0.0
+
+
+BASELINE_FULL = "srghn_full"
+BASELINE_FROZEN_MUTATION = "frozen_mutation"
+BASELINE_FIXED_LR = "fixed_lr"
+BASELINE_NO_SELF_REFERENCE = "no_self_reference"
+
+
+@dataclass(frozen=True)
 class ExperimentConfig:
     task_name: str
     seed: int
@@ -28,6 +42,13 @@ class ExperimentConfig:
     switch_gen_start: int | None
     switch_gen_end: int | None
     switch_rule: str | None
+    shift_windows: tuple[ShiftWindowConfig, ...]
+    baseline_name: str
+    mutation_exclude_modules: tuple[str, ...]
+    fixed_mutation_lr: float | None
+    wandb_project: str | None
+    wandb_group: str | None
+    wandb_name: str | None
     env_backend: str
     env_id: str
     brax_backend: str | None
@@ -64,6 +85,13 @@ def make_config_cartpole_switch(
         switch_gen_start=600,
         switch_gen_end=1200,
         switch_rule="cartpole_flip",
+        shift_windows=(ShiftWindowConfig(600, 1200, "cartpole_flip"),),
+        baseline_name=BASELINE_FULL,
+        mutation_exclude_modules=(),
+        fixed_mutation_lr=None,
+        wandb_project=None,
+        wandb_group=None,
+        wandb_name=None,
         env_backend="gymnax",
         env_id="CartPole-v1",
         brax_backend=None,
@@ -101,6 +129,13 @@ def make_config_ant_brax(
         switch_gen_start=None,
         switch_gen_end=None,
         switch_rule=None,
+        shift_windows=(),
+        baseline_name=BASELINE_FULL,
+        mutation_exclude_modules=(),
+        fixed_mutation_lr=None,
+        wandb_project=None,
+        wandb_group=None,
+        wandb_name=None,
         env_backend="brax",
         env_id="ant",
         brax_backend=None,
@@ -146,6 +181,13 @@ def make_config_gymnax_generic(
         switch_gen_start=None,
         switch_gen_end=None,
         switch_rule=None,
+        shift_windows=(),
+        baseline_name=BASELINE_FULL,
+        mutation_exclude_modules=(),
+        fixed_mutation_lr=None,
+        wandb_project=None,
+        wandb_group=None,
+        wandb_name=None,
         env_backend="gymnax",
         env_id=env_id,
         brax_backend=None,
@@ -192,6 +234,13 @@ def make_config_brax_generic(
         switch_gen_start=None,
         switch_gen_end=None,
         switch_rule=None,
+        shift_windows=(),
+        baseline_name=BASELINE_FULL,
+        mutation_exclude_modules=(),
+        fixed_mutation_lr=None,
+        wandb_project=None,
+        wandb_group=None,
+        wandb_name=None,
         env_backend="brax",
         env_id=env_id,
         brax_backend=brax_backend,
@@ -237,9 +286,159 @@ def make_config_mujoco_playground_generic(
         switch_gen_start=None,
         switch_gen_end=None,
         switch_rule=None,
+        shift_windows=(),
+        baseline_name=BASELINE_FULL,
+        mutation_exclude_modules=(),
+        fixed_mutation_lr=None,
+        wandb_project=None,
+        wandb_group=None,
+        wandb_name=None,
         env_backend="mujoco_playground",
         env_id=env_id,
         brax_backend=None,
         obs_norm_clip=5.0,
         obs_norm_eps=1e-8,
+    )
+
+
+def _with_nonstationary_overrides(
+    config: ExperimentConfig,
+    *,
+    shift_windows: tuple[ShiftWindowConfig, ...],
+    baseline_name: str = BASELINE_FULL,
+    fixed_mutation_lr: float | None = None,
+    mutation_exclude_modules: tuple[str, ...] = (),
+    wandb_project: str | None = None,
+    wandb_group: str | None = None,
+    wandb_name: str | None = None,
+) -> ExperimentConfig:
+    return config.__class__(
+        **{
+            **config.__dict__,
+            "shift_windows": shift_windows,
+            "baseline_name": baseline_name,
+            "fixed_mutation_lr": fixed_mutation_lr,
+            "mutation_exclude_modules": mutation_exclude_modules,
+            "wandb_project": wandb_project,
+            "wandb_group": wandb_group,
+            "wandb_name": wandb_name,
+        }
+    )
+
+
+def baseline_overrides(
+    baseline_name: str,
+    *,
+    fixed_mutation_lr: float | None = 0.05,
+) -> dict:
+    if baseline_name == BASELINE_FULL:
+        return {
+            "baseline_name": baseline_name,
+            "mutation_exclude_modules": (),
+            "fixed_mutation_lr": None,
+        }
+    if baseline_name == BASELINE_FROZEN_MUTATION:
+        return {
+            "baseline_name": baseline_name,
+            "mutation_exclude_modules": ("stoch",),
+            "fixed_mutation_lr": None,
+        }
+    if baseline_name == BASELINE_FIXED_LR:
+        return {
+            "baseline_name": baseline_name,
+            "mutation_exclude_modules": (),
+            "fixed_mutation_lr": fixed_mutation_lr,
+        }
+    if baseline_name == BASELINE_NO_SELF_REFERENCE:
+        return {
+            "baseline_name": baseline_name,
+            "mutation_exclude_modules": (
+                "self_node_emb",
+                "self_context_emb",
+                "self_feat_proj",
+                "encoder_self",
+                "stoch",
+            ),
+            "fixed_mutation_lr": None,
+        }
+    raise ValueError(f"Unknown baseline_name: {baseline_name}")
+
+
+def make_config_nonstationary_gymnax(
+    env_id: str,
+    *,
+    seed: int = 0,
+    pop_size: int = 30,
+    num_generations: int = 1500,
+    episode_horizon: int = 500,
+    children_per_parent: int = 2,
+    episodes_per_eval: int = 1,
+    parameter_block_size: int = 64,
+    mutation_block_ratio: float = 0.125,
+    shift_windows: tuple[ShiftWindowConfig, ...] = (ShiftWindowConfig(600, 1200, "cartpole_flip"),),
+    baseline_name: str = BASELINE_FULL,
+    fixed_mutation_lr: float | None = 0.05,
+    wandb_project: str | None = None,
+    wandb_group: str | None = None,
+    wandb_name: str | None = None,
+) -> ExperimentConfig:
+    config = make_config_gymnax_generic(
+        env_id,
+        seed=seed,
+        pop_size=pop_size,
+        num_generations=num_generations,
+        episode_horizon=episode_horizon,
+        children_per_parent=children_per_parent,
+        episodes_per_eval=episodes_per_eval,
+        parameter_block_size=parameter_block_size,
+        mutation_block_ratio=mutation_block_ratio,
+    )
+    return _with_nonstationary_overrides(
+        config,
+        shift_windows=shift_windows,
+        wandb_project=wandb_project,
+        wandb_group=wandb_group,
+        wandb_name=wandb_name,
+        **baseline_overrides(baseline_name, fixed_mutation_lr=fixed_mutation_lr),
+    )
+
+
+def make_config_nonstationary_brax(
+    env_id: str,
+    *,
+    seed: int = 0,
+    pop_size: int = 50,
+    num_generations: int = 1000,
+    episode_horizon: int = 1000,
+    children_per_parent: int = 2,
+    episodes_per_eval: int = 1,
+    brax_backend: str | None = None,
+    parameter_block_size: int = 64,
+    mutation_block_ratio: float = 0.125,
+    shift_windows: tuple[ShiftWindowConfig, ...] = (ShiftWindowConfig(400, None, "brax_direction_switch"),),
+    baseline_name: str = BASELINE_FULL,
+    fixed_mutation_lr: float | None = 0.02,
+    wandb_project: str | None = None,
+    wandb_group: str | None = None,
+    wandb_name: str | None = None,
+) -> ExperimentConfig:
+    config = make_config_brax_generic(
+        env_id,
+        seed=seed,
+        pop_size=pop_size,
+        num_generations=num_generations,
+        episode_horizon=episode_horizon,
+        children_per_parent=children_per_parent,
+        episodes_per_eval=episodes_per_eval,
+        brax_backend=brax_backend,
+        parameter_block_size=parameter_block_size,
+        mutation_block_ratio=mutation_block_ratio,
+    )
+    return _with_nonstationary_overrides(
+        config,
+        shift_windows=shift_windows,
+        wandb_project=wandb_project,
+        wandb_group=wandb_group,
+        wandb_name=wandb_name,
+        **baseline_overrides(baseline_name, fixed_mutation_lr=fixed_mutation_lr),
     )

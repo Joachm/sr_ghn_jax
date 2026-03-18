@@ -5,6 +5,8 @@ import jax
 import jax.numpy as jnp
 from jax.flatten_util import ravel_pytree
 
+from srghn import MutationMetadata
+
 
 def _ravel_individual(indiv) -> jnp.ndarray:
     vec, _ = ravel_pytree(eqx.filter(indiv, eqx.is_array))
@@ -38,5 +40,33 @@ def compute_metrics(pop, fitness) -> dict:
     return {
         "fitness_mean": jnp.mean(fitness),
         "fitness_best": jnp.max(fitness),
+        "fitness_min": jnp.min(fitness),
+        "fitness_std": jnp.std(fitness),
+        "fitness_median": jnp.median(fitness),
         "diversity": population_diversity(pop),
     }
+
+
+def _metadata_stats(prefix: str, metadata: MutationMetadata) -> dict:
+    return {
+        f"{prefix}_mutation_rate_mean": jnp.mean(metadata.mutation_rate_mean),
+        f"{prefix}_mutation_rate_std": jnp.std(metadata.mutation_rate_mean),
+        f"{prefix}_mutation_rate_max": jnp.max(metadata.mutation_rate_max),
+        f"{prefix}_mutation_block_fraction_mean": jnp.mean(metadata.mutation_block_fraction),
+        f"{prefix}_mutation_blocks_selected_mean": jnp.mean(metadata.mutation_blocks_selected.astype(jnp.float32)),
+        f"{prefix}_mutation_total_blocks_mean": jnp.mean(metadata.mutation_total_blocks.astype(jnp.float32)),
+        f"{prefix}_update_rms_mean": jnp.mean(metadata.update_rms),
+        f"{prefix}_self_distance_rms_mean": jnp.mean(metadata.self_distance_rms),
+    }
+
+
+def compute_experiment_metrics(
+    pop,
+    fitness,
+    parent_metadata: MutationMetadata,
+    elite_metadata: MutationMetadata,
+) -> dict:
+    metrics = compute_metrics(pop, fitness)
+    metrics.update(_metadata_stats("population", parent_metadata))
+    metrics.update(_metadata_stats("elite", elite_metadata))
+    return metrics

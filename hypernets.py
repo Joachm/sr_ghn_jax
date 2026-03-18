@@ -117,6 +117,7 @@ class StochasticHyper(eqx.Module):
         child_ctx: jnp.ndarray,
         out_dim: int,
         key: jax.random.KeyArray,
+        fixed_lr: float | None = None,
     ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         """Returns (selected_block_ids, dense_updates_per_block, mutation_rate_scalar)."""
         if out_dim <= 0:
@@ -140,6 +141,8 @@ class StochasticHyper(eqx.Module):
         selected_ctx = block_ctx[block_ids]
         lr_logits = self.lr_head(x)
         lr = jnp.max(jax.nn.sigmoid(lr_logits))
+        if fixed_lr is not None:
+            lr = jnp.asarray(fixed_lr, dtype=x.dtype)
 
         k_eps, k_noise = jax.random.split(key, 2)
         log_std = jax.vmap(self.std_head)(selected_ctx)

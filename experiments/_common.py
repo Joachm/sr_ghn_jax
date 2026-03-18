@@ -79,7 +79,7 @@ def _build_template_srghn(num_self_nodes: int, policy_spec: ParamNodeSpec, confi
         det=det,
         self_graph=make_chain_graph(num_self_nodes, bidir=True),
         policy_graph=make_policy_hierarchical_graph(policy_spec.group_ids, bidir=True),
-        self_spec=ParamNodeSpec((), (), 0, 0, (), (), (), None),
+        self_spec=ParamNodeSpec((), (), 0, 0, (), (), (), (), None),
         policy_spec=policy_spec,
         clip_params=config.clip_params,
     )
@@ -116,7 +116,12 @@ def run_experiment(config):
         import wandb
 
         if wandb.run is None:
-            wandb.init(project="srghn_jax", name=config.env_id, config=config.__dict__)
+            wandb.init(
+                project=config.wandb_project or "srghn_jax",
+                group=config.wandb_group,
+                name=config.wandb_name or config.env_id,
+                config=config.__dict__,
+            )
     except Exception:
         wandb = None
     graph_tuple = (graphs.self_graph, graphs.policy_graph)

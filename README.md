@@ -10,6 +10,11 @@ python -m experiments.ant_brax --backend spring
 python -m experiments.gymnax_generic --env-id CartPole-v1 --children-per-parent 2
 python -m experiments.brax_generic --env-id ant --backend spring --children-per-parent 2
 python -m experiments.mujoco_playground_generic --env-id humanoid:run --children-per-parent 2
+python -m experiments.nonstationary_gymnax --variant cartpole_flip --baseline srghn_full
+python -m experiments.nonstationary_brax --variant brax_direction_switch --baseline srghn_full
+python -m experiments.adaptation_compare --suite cartpole
+python plot_adaptation_results.py --input adaptation_compare_cartpole.pkl
+bash run_gymnax_nonstationary_suite.sh --skip-existing
 ```
 
 MuJoCo Playground runs now also save a replayable solution artifact:

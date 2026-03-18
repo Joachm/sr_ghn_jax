@@ -3,7 +3,7 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 
-from envs import make_env, map_action_for_switch
+from envs import apply_reward_shifts, make_env, map_action_for_shifts, map_observation_for_shifts
 from obs_norm import normalize_obs
 from policy import apply_policy
 from srghn import make_policy
@@ -16,7 +16,7 @@ def rollout_episode(
     config,
     obs_norm_state=None,
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    env, env_params, obs_dim, _, is_discrete, action_shape, action_low, action_high = make_env(config)
+    env, env_params, obs_dim, act_dim, is_discrete, action_shape, action_low, action_high = make_env(config)
     obs_dtype = jnp.float32
 
     if config.env_backend == "gymnax":
@@ -31,9 +31,10 @@ def rollout_episode(
             obs_sum_t = obs_sum_t + active * obs_flat
             obs_sq_sum_t = obs_sq_sum_t + active * jnp.square(obs_flat)
             obs_count_t = obs_count_t + active
-            obs_in = normalize_obs(obs_t, obs_norm_state, clip=config.obs_norm_clip, eps=config.obs_norm_eps)
+            obs_shifted = map_observation_for_shifts(obs_t, gen, config)
+            obs_in = normalize_obs(obs_shifted, obs_norm_state, clip=config.obs_norm_clip, eps=config.obs_norm_eps)
             action = apply_policy(policy_params, obs_in, is_discrete=is_discrete)
-            action = map_action_for_switch(action, gen, config)
+            action = map_action_for_shifts(action, gen, config, act_dim=act_dim, is_discrete=is_discrete)
             if is_discrete:
                 action = jnp.asarray(action, dtype=jnp.int32)
             else:
@@ -44,6 +45,7 @@ def rollout_episode(
             def do_step(_):
                 next_obs, next_state, reward, done, _ = env.step(key_step, state_t, action, env_params)
                 reward = jnp.asarray(reward, dtype=jnp.float32)
+                reward = apply_reward_shifts(reward, next_state, gen, config)
                 done = jnp.asarray(done, dtype=jnp.bool_)
                 return next_obs, next_state, reward, done
 
@@ -67,9 +69,10 @@ def rollout_episode(
             obs_sum_t = obs_sum_t + active * obs_flat
             obs_sq_sum_t = obs_sq_sum_t + active * jnp.square(obs_flat)
             obs_count_t = obs_count_t + active
-            obs_in = normalize_obs(obs_t, obs_norm_state, clip=config.obs_norm_clip, eps=config.obs_norm_eps)
+            obs_shifted = map_observation_for_shifts(obs_t, gen, config)
+            obs_in = normalize_obs(obs_shifted, obs_norm_state, clip=config.obs_norm_clip, eps=config.obs_norm_eps)
             action = apply_policy(policy_params, obs_in, is_discrete=is_discrete)
-            action = map_action_for_switch(action, gen, config)
+            action = map_action_for_shifts(action, gen, config, act_dim=act_dim, is_discrete=is_discrete)
             if is_discrete:
                 action = jnp.asarray(action, dtype=jnp.int32)
             else:
@@ -80,6 +83,7 @@ def rollout_episode(
             def do_step(_):
                 next_state = env.step(state_t, action)
                 reward = jnp.asarray(next_state.reward, dtype=jnp.float32)
+                reward = apply_reward_shifts(reward, next_state, gen, config)
                 done = jnp.asarray(next_state.done, dtype=jnp.bool_)
                 return next_state.obs, next_state, reward, done
 

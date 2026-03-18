@@ -113,19 +113,120 @@ def make_env(config):
     raise ValueError(f"Unknown env_backend: {config.env_backend}")
 
 
-def map_action_for_switch(action: jnp.ndarray, gen: jnp.ndarray, config) -> jnp.ndarray:
-    if config.switch_gen_start is None:
-        return action
-
-    start = config.switch_gen_start
-    end = config.switch_gen_end
+def _window_active(gen: jnp.ndarray, start: int, end: int | None) -> jnp.ndarray:
     if end is None:
-        in_window = gen >= start
-    else:
-        in_window = jnp.logical_and(gen >= start, gen <= end)
+        return gen >= start
+    return jnp.logical_and(gen >= start, gen <= end)
 
-    if config.switch_rule == "cartpole_flip":
-        flipped = 1 - action
-        return jnp.where(in_window, flipped, action)
 
-    return action
+def iter_shift_windows(config) -> tuple:
+    windows = getattr(config, "shift_windows", ())
+    if windows:
+        return windows
+    if getattr(config, "switch_gen_start", None) is None:
+        return ()
+    try:
+        from configs import ShiftWindowConfig
+    except Exception:
+        return ()
+    return (
+        ShiftWindowConfig(
+            start_gen=config.switch_gen_start,
+            end_gen=config.switch_gen_end,
+            rule=config.switch_rule or "cartpole_flip",
+        ),
+    )
+
+
+def active_shift_mask(gen: jnp.ndarray, config, rule: str) -> jnp.ndarray:
+    windows = iter_shift_windows(config)
+    if not windows:
+        return jnp.asarray(False)
+    active = jnp.asarray(False)
+    for window in windows:
+        if window.rule != rule:
+            continue
+        active = jnp.logical_or(active, _window_active(gen, window.start_gen, window.end_gen))
+    return active
+
+
+def map_observation_for_shifts(obs: jnp.ndarray, gen: jnp.ndarray, config) -> jnp.ndarray:
+    out = jnp.asarray(obs)
+    for window in iter_shift_windows(config):
+        active = _window_active(gen, window.start_gen, window.end_gen)
+        if window.rule == "pendulum_obs_flip":
+            flipped = out.at[0].set(out[1]).at[1].set(out[0]).at[2].set(-out[2])
+            out = jnp.where(active, flipped, out)
+    return out
+
+
+def map_action_for_shifts(
+    action: jnp.ndarray,
+    gen: jnp.ndarray,
+    config,
+    *,
+    act_dim: int | None = None,
+    is_discrete: bool | None = None,
+) -> jnp.ndarray:
+    out = action
+    for window in iter_shift_windows(config):
+        active = _window_active(gen, window.start_gen, window.end_gen)
+        if window.rule == "cartpole_flip":
+            out = jnp.where(active, 1 - out, out)
+        elif window.rule == "discrete_reverse":
+            if is_discrete and act_dim is not None:
+                candidate = (act_dim - 1) - out
+                out = jnp.where(active, candidate, out)
+        elif window.rule == "continuous_action_flip":
+            if is_discrete is False:
+                out = jnp.where(active, -out, out)
+    return out
+
+
+def map_action_for_switch(action: jnp.ndarray, gen: jnp.ndarray, config) -> jnp.ndarray:
+    return map_action_for_shifts(action, gen, config)
+
+
+def _extract_progress_metric(next_state) -> jnp.ndarray | None:
+    metrics = getattr(next_state, "metrics", None)
+    if metrics is None:
+        return None
+    for key in (
+        "x_velocity",
+        "reward_forward",
+        "forward_reward",
+        "reward_linvel",
+        "velocity_x",
+    ):
+        if key in metrics:
+            return jnp.asarray(metrics[key], dtype=jnp.float32)
+    return None
+
+
+def apply_reward_shifts(
+    reward: jnp.ndarray,
+    next_state,
+    gen: jnp.ndarray,
+    config,
+) -> jnp.ndarray:
+    out = reward
+    for window in iter_shift_windows(config):
+        active = _window_active(gen, window.start_gen, window.end_gen)
+        if window.rule == "reward_negate":
+            out = jnp.where(active, -out, out)
+        elif window.rule == "brax_direction_switch":
+            progress = _extract_progress_metric(next_state)
+            candidate = -out if progress is None else -progress
+            out = jnp.where(active, candidate.astype(out.dtype), out)
+        elif window.rule == "brax_speed_target_switch":
+            progress = _extract_progress_metric(next_state)
+            if progress is None:
+                candidate = -jnp.abs(out - jnp.asarray(window.target_value, dtype=out.dtype))
+            else:
+                candidate = -jnp.abs(progress - jnp.asarray(window.target_value, dtype=progress.dtype))
+            out = jnp.where(active, candidate.astype(out.dtype), out)
+        elif window.rule == "cartpole_flip":
+            continue
+        else:
+            raise ValueError(f"Unknown shift rule: {window.rule}")
+    return out

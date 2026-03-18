@@ -7,13 +7,13 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
-from envs import make_env
+from envs import iter_shift_windows, make_env
 from graphs import GraphSpec
 from hypernets import DeterministicHead, StochasticHyper
-from metrics import compute_metrics
+from metrics import compute_experiment_metrics
 from obs_norm import ObsNormState, init_obs_norm, update_obs_norm
 from rollout import evaluate_individual_with_obs_stats
-from srghn import SRGHN, mutate
+from srghn import SRGHN, mutation_metadata, mutate_with_metadata
 from gnn import GraphEncoder
 from specs import ParamNodeSpec
 
@@ -132,22 +132,29 @@ def evo_step(state: EvoState, gen: jnp.int32, config) -> tuple[EvoState, dict]:
             return
         if wandb.run is None:
             return
-        wandb.log(
-            {
-                "gen": int(gen_idx),
-                "fitness_mean": float(metrics_dict["fitness_mean"]),
-                "fitness_best": float(metrics_dict["fitness_best"]),
-                "diversity": float(metrics_dict["diversity"]),
-            }
-        )
+        payload = {"gen": int(gen_idx)}
+        for key, value in metrics_dict.items():
+            payload[key] = float(value)
+        wandb.log(payload)
 
     pop_arr, pop_static = eqx.partition(state.pop, eqx.is_array)
     num_children = config.pop_size * config.children_per_parent
-    child_keys = jax.random.split(key_children, num_children)
+    parent_probe_keys = jax.random.split(key_children, config.pop_size)
+    child_seed = jax.random.fold_in(key_children, 1)
+    child_keys = jax.random.split(child_seed, num_children)
     parent_idx = jnp.repeat(jnp.arange(config.pop_size), config.children_per_parent)
     parents_rep_arr = jax.tree_util.tree_map(lambda x: x[parent_idx], pop_arr)
     parents_rep = eqx.combine(parents_rep_arr, pop_static)
-    children = eqx.filter_vmap(mutate)(parents_rep, child_keys)
+    baseline_kwargs = {
+        "excluded_modules": config.mutation_exclude_modules,
+        "fixed_mutation_lr": config.fixed_mutation_lr,
+    }
+    parent_metadata = eqx.filter_vmap(
+        lambda indiv, probe_key: mutation_metadata(indiv, probe_key, **baseline_kwargs)
+    )(state.pop, parent_probe_keys)
+    children, child_metadata = eqx.filter_vmap(
+        lambda indiv, child_key: mutate_with_metadata(indiv, child_key, **baseline_kwargs)
+    )(parents_rep, child_keys)
 
     children_arr, children_static = eqx.partition(children, eqx.is_array)
     all_arr = jax.tree_util.tree_map(lambda p, c: jnp.concatenate([p, c], axis=0), pop_arr, children_arr)
@@ -172,13 +179,30 @@ def evo_step(state: EvoState, gen: jnp.int32, config) -> tuple[EvoState, dict]:
         child_fitness, axis=1
     )
     selection_fitness = jnp.concatenate([blended_parent, child_fitness.reshape(-1)], axis=0)
-    # Log raw environment fitness, not the blended selection fitness.
-    metrics = compute_metrics(state.pop, all_fitness)
-    jax.debug.callback(_wandb_log, metrics, gen)
     select_idx = jnp.argsort(selection_fitness)[-config.pop_size :]
     next_arr = jax.tree_util.tree_map(lambda x: x[select_idx], all_arr)
     next_pop = eqx.combine(next_arr, children_static)
     next_pop_fitness = all_fitness[select_idx]
+    parent_meta_arr = eqx.filter(parent_metadata, eqx.is_array)
+    child_meta_arr, child_meta_static = eqx.partition(child_metadata, eqx.is_array)
+    candidate_meta_arr = jax.tree_util.tree_map(
+        lambda parent_val, child_val: jnp.concatenate([parent_val, child_val], axis=0),
+        parent_meta_arr,
+        child_meta_arr,
+    )
+    elite_meta_arr = jax.tree_util.tree_map(lambda x: x[select_idx], candidate_meta_arr)
+    elite_metadata = eqx.combine(elite_meta_arr, child_meta_static)
+    # Log raw environment fitness, not the blended selection fitness.
+    metrics = compute_experiment_metrics(state.pop, all_fitness, parent_metadata, elite_metadata)
+    active_windows = 0
+    for window in iter_shift_windows(config):
+        if window.end_gen is None:
+            active = gen >= window.start_gen
+        else:
+            active = jnp.logical_and(gen >= window.start_gen, gen <= window.end_gen)
+        active_windows = active_windows + active.astype(jnp.int32)
+    metrics["active_shift_windows"] = active_windows.astype(jnp.float32)
+    jax.debug.callback(_wandb_log, metrics, gen)
     updated_obs_norm = update_obs_norm(
         state.obs_norm,
         jnp.sum(all_obs_sum[select_idx], axis=0),
