@@ -128,10 +128,12 @@ class AdaptationTests(unittest.TestCase):
             pop = init_population(jax.random.key(0), config, graphs, specs)
             pop_arr, pop_static = eqx.partition(pop, eqx.is_array)
             indiv = eqx.combine(jax.tree_util.tree_map(lambda x: x[0], pop_arr), pop_static)
-            _child, metadata = mutate_with_metadata(indiv, jax.random.key(1))
+            child, metadata = mutate_with_metadata(indiv, jax.random.key(1))
             self.assertTrue(jnp.isfinite(metadata.mutation_rate_mean))
             self.assertTrue(jnp.isfinite(metadata.update_rms))
             self.assertGreaterEqual(float(metadata.mutation_block_fraction), 0.0)
+            self.assertIn("stoch", indiv.self_spec.module_names)
+            self.assertFalse(jnp.allclose(indiv.stoch.basis, child.stoch.basis))
         except ModuleNotFoundError as exc:
             self.skipTest(str(exc))
 
