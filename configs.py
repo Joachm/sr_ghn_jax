@@ -203,15 +203,15 @@ def make_config_brax_generic(
 def make_config_mujoco_playground_generic(
     env_id: str,
     *,
-    seed: int = 0,
+    seed: int = 1,
     pop_size: int = 200,
-    num_generations: int = 5000,
+    num_generations: int = 20000,
     episode_horizon: int = 1000,
     children_per_parent: int = 8,
-    episodes_per_eval: int = 1,
+    episodes_per_eval: int = 2,
     child_factor: float = 0.0,
     parameter_block_size: int = 4096,
-    mutation_block_ratio: float = 0.5,
+    mutation_block_ratio: float = 1.,
 ) -> ExperimentConfig:
     return ExperimentConfig(
         task_name="mujoco_playground_generic",
