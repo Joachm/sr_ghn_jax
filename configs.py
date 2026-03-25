@@ -22,6 +22,10 @@ GYMNAX_SUITE_DEFAULT_NUM_GENERATIONS = 1500
 GYMNAX_SUITE_DEFAULT_EVALS_PER_GENERATION = GYMNAX_SUITE_DEFAULT_POP_SIZE * (1 + GYMNAX_SUITE_DEFAULT_CHILDREN_PER_PARENT)
 
 
+def gymnax_control_pop_size(children_per_parent: int) -> int:
+    return GYMNAX_SUITE_DEFAULT_POP_SIZE * (1 + children_per_parent)
+
+
 @dataclass(frozen=True)
 class ExperimentConfig:
     task_name: str
@@ -434,7 +438,7 @@ def make_config_nonstationary_gymnax(
     wandb_name: str | None = None,
 ) -> ExperimentConfig:
     resolved_pop_size = (
-        GYMNAX_SUITE_DEFAULT_EVALS_PER_GENERATION
+        gymnax_control_pop_size(children_per_parent)
         if optimizer_family == "evosax" and pop_size is None
         else GYMNAX_SUITE_DEFAULT_POP_SIZE
         if pop_size is None

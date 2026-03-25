@@ -15,6 +15,7 @@ from configs import (
     GYMNAX_SUITE_DEFAULT_EVALS_PER_GENERATION,
     GYMNAX_SUITE_DEFAULT_NUM_GENERATIONS,
     GYMNAX_SUITE_DEFAULT_POP_SIZE,
+    gymnax_control_pop_size,
     ShiftWindowConfig,
     make_config_gymnax_generic,
     make_config_nonstationary_brax,
@@ -142,6 +143,15 @@ class AdaptationTests(unittest.TestCase):
         self.assertEqual(evosax_config.num_generations, GYMNAX_SUITE_DEFAULT_NUM_GENERATIONS)
         self.assertEqual(default_wandb_project(srghn_config), "srghn_jax")
         self.assertEqual(default_wandb_project(evosax_config), "sr-ghn_control_cma_es")
+
+        shorter_branching = make_config_nonstationary_gymnax(
+            "CartPole-v1",
+            optimizer_family="evosax",
+            baseline_name="evosax",
+            evosax_algo="cma_es",
+            children_per_parent=2,
+        )
+        self.assertEqual(shorter_branching.pop_size, gymnax_control_pop_size(2))
 
     def test_policy_vector_round_trip(self):
         try:

@@ -13,6 +13,7 @@ from experiments.policy_vectors import policy_num_dims, unflatten_policy_vector,
 from rollout import rollout_episode
 
 
+@jax.tree_util.register_pytree_node_class
 @dataclass
 class EvosaxState:
     population: jnp.ndarray
@@ -20,6 +21,20 @@ class EvosaxState:
     obs_norm: Any
     strategy_state: Any
     fitness: jnp.ndarray
+
+    def tree_flatten(self):
+        return (self.population, self.key, self.obs_norm, self.strategy_state, self.fitness), None
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        population, key, obs_norm, strategy_state, fitness = children
+        return cls(
+            population=population,
+            key=key,
+            obs_norm=obs_norm,
+            strategy_state=strategy_state,
+            fitness=fitness,
+        )
 
 
 def _vector_population_diversity(pop: jnp.ndarray) -> jnp.ndarray:
@@ -105,26 +120,8 @@ def _wandb_log(metrics_dict: dict, gen_idx: int) -> None:
     wandb.log(payload)
 
 
-def run_evosax(key: jax.random.KeyArray, config, policy_spec):
-    expected_dims = policy_num_dims(policy_spec)
-    solution = zero_policy_vector(policy_spec)
-    if solution.shape[0] != expected_dims:
-        raise ValueError("Policy vector dimensionality does not match the policy spec.")
-    adapter = EvosaxStrategyAdapter(config, solution=solution)
-    key_init, key_loop = jax.random.split(key, 2)
-    strategy_state = adapter.init(key_init)
-    _, _, obs_dim, _, _, _, _, _ = make_env(config)
-    state = EvosaxState(
-        population=jnp.tile(solution[None, :], (config.pop_size, 1)),
-        key=key_loop,
-        obs_norm=init_obs_norm(obs_dim),
-        strategy_state=strategy_state,
-        fitness=jnp.zeros((config.pop_size,), dtype=jnp.float32),
-    )
-
-    metrics_history = []
-    for gen_idx in range(config.num_generations):
-        gen = jnp.asarray(gen_idx, dtype=jnp.int32)
+def _run_evosax_impl(init_state: EvosaxState, gens: jnp.ndarray, config, policy_spec, adapter):
+    def step_fn(state: EvosaxState, gen: jnp.ndarray):
         key_eval, key_ask, key_tell, key_next = jax.random.split(state.key, 4)
         population, ask_state = adapter.ask(key_ask, state.strategy_state)
         eval_keys = jax.random.split(key_eval, config.pop_size)
@@ -141,7 +138,7 @@ def run_evosax(key: jax.random.KeyArray, config, policy_spec):
         next_strategy_state = adapter.tell(key_tell, population, fitness, ask_state)
         metrics = _compute_vector_metrics(population, fitness)
         metrics["active_shift_windows"] = _active_shift_windows(gen, config)
-        _wandb_log(metrics, gen_idx)
+        jax.debug.callback(_wandb_log, metrics, gen)
 
         updated_obs_norm = update_obs_norm(
             state.obs_norm,
@@ -149,18 +146,40 @@ def run_evosax(key: jax.random.KeyArray, config, policy_spec):
             jnp.sum(obs_sq_sum, axis=0),
             jnp.sum(obs_count, axis=0),
         )
-        next_obs_norm = state.obs_norm if gen_idx == config.num_generations - 1 else updated_obs_norm
-        state = EvosaxState(
+        is_last_gen = gen == jnp.asarray(config.num_generations - 1, dtype=gen.dtype)
+        next_obs_norm = jax.tree_util.tree_map(
+            lambda updated, current: jnp.where(is_last_gen, current, updated),
+            updated_obs_norm,
+            state.obs_norm,
+        )
+        next_state = EvosaxState(
             population=population,
             key=key_next,
             obs_norm=next_obs_norm,
             strategy_state=next_strategy_state,
             fitness=fitness,
         )
-        metrics_history.append(metrics)
+        return next_state, metrics
 
-    stacked_metrics = {
-        metric_name: jnp.stack([generation_metrics[metric_name] for generation_metrics in metrics_history])
-        for metric_name in metrics_history[0]
-    }
-    return state, stacked_metrics
+    return jax.lax.scan(step_fn, init_state, gens)
+
+
+def run_evosax(key: jax.random.KeyArray, config, policy_spec):
+    expected_dims = policy_num_dims(policy_spec)
+    solution = zero_policy_vector(policy_spec)
+    if solution.shape[0] != expected_dims:
+        raise ValueError("Policy vector dimensionality does not match the policy spec.")
+    adapter = EvosaxStrategyAdapter(config, solution=solution)
+    key_init, key_loop = jax.random.split(key, 2)
+    strategy_state = adapter.init(key_init)
+    _, _, obs_dim, _, _, _, _, _ = make_env(config)
+    init_state = EvosaxState(
+        population=jnp.tile(solution[None, :], (config.pop_size, 1)),
+        key=key_loop,
+        obs_norm=init_obs_norm(obs_dim),
+        strategy_state=strategy_state,
+        fitness=jnp.zeros((config.pop_size,), dtype=jnp.float32),
+    )
+    gens = jnp.arange(config.num_generations, dtype=jnp.int32)
+    run_impl = jax.jit(lambda state, generations: _run_evosax_impl(state, generations, config, policy_spec, adapter))
+    return run_impl(init_state, gens)
