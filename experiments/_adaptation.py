@@ -11,6 +11,14 @@ DEFAULT_BASELINES = (
 )
 
 
+GYMNAX_MINATAR_SUITE_ENVIRONMENTS = (
+    "Asterix-MinAtar",
+    "Breakout-MinAtar",
+    "Freeway-MinAtar",
+    "SpaceInvaders-MinAtar",
+)
+
+
 def gymnax_shift_windows(variant: str) -> tuple[ShiftWindowConfig, ...]:
     if variant == "cartpole_flip":
         return (ShiftWindowConfig(600, 1200, "cartpole_flip"),)
@@ -50,6 +58,15 @@ def gymnax_suite_shift_windows(env_id: str) -> tuple[ShiftWindowConfig, ...]:
             ShiftWindowConfig(900, 1200, "pendulum_obs_flip"),
         )
     raise ValueError(f"Unsupported Gymnax suite env: {env_id}")
+
+
+def gymnax_minatar_suite_shift_windows(env_id: str) -> tuple[ShiftWindowConfig, ...]:
+    if env_id in GYMNAX_MINATAR_SUITE_ENVIRONMENTS:
+        return (
+            ShiftWindowConfig(400, 700, "discrete_reverse"),
+            ShiftWindowConfig(900, 1200, "discrete_reverse"),
+        )
+    raise ValueError(f"Unsupported Gymnax MinAtar suite env: {env_id}")
 
 
 def brax_shift_windows(variant: str, *, target_speed: float = 1.0) -> tuple[ShiftWindowConfig, ...]:

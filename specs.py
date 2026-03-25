@@ -227,6 +227,42 @@ def _mlp_param_shapes(input_dim: int, hidden_dims: Sequence[int], output_dim: in
     return tuple(shapes)
 
 
+def _conv_output_dim(size: int, kernel: int, stride: int) -> int:
+    return ((size - kernel) // stride) + 1
+
+
+def _cnn_mlp_param_shapes(
+    obs_shape: tuple[int, int, int],
+    conv_channels: Sequence[int],
+    conv_kernel_sizes: Sequence[tuple[int, int]],
+    conv_strides: Sequence[tuple[int, int]],
+    hidden_dims: Sequence[int],
+    output_dim: int,
+) -> tuple[tuple[int, ...], ...]:
+    if len(conv_channels) != len(conv_kernel_sizes) or len(conv_channels) != len(conv_strides):
+        raise ValueError("CNN policy config must define matching conv channel, kernel, and stride tuples.")
+    if not conv_channels:
+        raise ValueError("CNN policies require at least one convolution layer.")
+
+    height, width, channels = obs_shape
+    in_channels = int(channels)
+    shapes: list[tuple[int, ...]] = []
+    for out_channels, kernel_size, stride in zip(conv_channels, conv_kernel_sizes, conv_strides):
+        kernel_h, kernel_w = kernel_size
+        stride_h, stride_w = stride
+        height = _conv_output_dim(height, kernel_h, stride_h)
+        width = _conv_output_dim(width, kernel_w, stride_w)
+        if height <= 0 or width <= 0:
+            raise ValueError("CNN policy config produces a non-positive spatial dimension.")
+        shapes.append((int(kernel_h), int(kernel_w), in_channels, int(out_channels)))
+        shapes.append((int(out_channels),))
+        in_channels = int(out_channels)
+
+    flattened_dim = int(height * width * in_channels)
+    shapes.extend(_mlp_param_shapes(flattened_dim, hidden_dims, output_dim))
+    return tuple(shapes)
+
+
 def _sizes_from_shapes(shapes: Iterable[tuple[int, ...]]) -> tuple[int, ...]:
     return tuple(int(prod(shape)) for shape in shapes)
 
@@ -314,7 +350,7 @@ def policy_spec_for_task(config) -> ParamNodeSpec:
         import gymnax
 
         env, env_params = gymnax.make(config.env_id)
-        obs_dim = int(prod(env.observation_space(env_params).shape))
+        obs_shape = tuple(int(dim) for dim in env.observation_space(env_params).shape)
         action_space = env.action_space(env_params)
         if hasattr(action_space, "nvec"):
             raise ValueError("MultiDiscrete action spaces are not supported.")
@@ -322,7 +358,23 @@ def policy_spec_for_task(config) -> ParamNodeSpec:
             act_dim = int(action_space.n)
         else:
             act_dim = int(prod(action_space.shape))
-        shapes = _mlp_param_shapes(obs_dim, hidden_dims or (32, 32), act_dim)
+        policy_architecture = getattr(config, "policy_architecture", "mlp")
+        if policy_architecture == "cnn_mlp":
+            if len(obs_shape) != 3:
+                raise ValueError("CNN Gymnax policies require rank-3 HWC observations.")
+            shapes = _cnn_mlp_param_shapes(
+                obs_shape,
+                getattr(config, "policy_conv_channels", ()),
+                getattr(config, "policy_conv_kernel_sizes", ()),
+                getattr(config, "policy_conv_strides", ()),
+                hidden_dims or (128,),
+                act_dim,
+            )
+        elif policy_architecture == "mlp":
+            obs_dim = int(prod(obs_shape))
+            shapes = _mlp_param_shapes(obs_dim, hidden_dims or (32, 32), act_dim)
+        else:
+            raise ValueError(f"Unknown policy_architecture: {policy_architecture}")
     elif task == "mujoco_playground_generic":
         env = _load_mujoco_playground_env(config.env_id)
         obs_dim = _infer_obs_dim(env)

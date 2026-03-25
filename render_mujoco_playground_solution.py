@@ -216,7 +216,7 @@ def _rollout_trajectory(individual, config, *, key: jax.random.KeyArray, obs_nor
     def step_fn(state):
         obs = state.obs
         obs_in = normalize_obs(obs, obs_norm_state, clip=config.obs_norm_clip, eps=config.obs_norm_eps)
-        action = apply_policy(policy_params, obs_in, is_discrete=is_discrete)
+        action = apply_policy(policy_params, obs_in, config, is_discrete=is_discrete)
         action = map_action_for_switch(action, gen, config)
         if is_discrete:
             action = jnp.asarray(action, dtype=jnp.int32)

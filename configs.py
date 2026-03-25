@@ -56,6 +56,10 @@ class ExperimentConfig:
     baseline_name: str
     evosax_algo: str | None
     evosax_sigma_init: float | None
+    policy_architecture: str
+    policy_conv_channels: tuple[int, ...]
+    policy_conv_kernel_sizes: tuple[tuple[int, int], ...]
+    policy_conv_strides: tuple[tuple[int, int], ...]
     policy_hidden_dims: tuple[int, ...]
     mutation_exclude_modules: tuple[str, ...]
     fixed_mutation_lr: float | None
@@ -82,6 +86,10 @@ class EvosaxControlConfig:
     optimizer_family: str
     evosax_algo: str
     evosax_sigma_init: float | None
+    policy_architecture: str
+    policy_conv_channels: tuple[int, ...]
+    policy_conv_kernel_sizes: tuple[tuple[int, int], ...]
+    policy_conv_strides: tuple[tuple[int, int], ...]
     policy_hidden_dims: tuple[int, ...]
     wandb_project: str | None
     wandb_group: str | None
@@ -127,6 +135,10 @@ def make_config_cartpole_switch(
         baseline_name=BASELINE_FULL,
         evosax_algo=None,
         evosax_sigma_init=None,
+        policy_architecture="mlp",
+        policy_conv_channels=(),
+        policy_conv_kernel_sizes=(),
+        policy_conv_strides=(),
         policy_hidden_dims=(32,),
         mutation_exclude_modules=(),
         fixed_mutation_lr=None,
@@ -175,6 +187,10 @@ def make_config_ant_brax(
         baseline_name=BASELINE_FULL,
         evosax_algo=None,
         evosax_sigma_init=None,
+        policy_architecture="mlp",
+        policy_conv_channels=(),
+        policy_conv_kernel_sizes=(),
+        policy_conv_strides=(),
         policy_hidden_dims=(32, 32, 32),
         mutation_exclude_modules=(),
         fixed_mutation_lr=None,
@@ -204,6 +220,10 @@ def make_config_gymnax_generic(
     optimizer_family: str = "srghn",
     evosax_algo: str | None = None,
     evosax_sigma_init: float | None = None,
+    policy_architecture: str = "mlp",
+    policy_conv_channels: tuple[int, ...] = (),
+    policy_conv_kernel_sizes: tuple[tuple[int, int], ...] = (),
+    policy_conv_strides: tuple[tuple[int, int], ...] = (),
     policy_hidden_dims: tuple[int, ...] = (32, 32),
 ) -> ExperimentConfig:
     return ExperimentConfig(
@@ -235,6 +255,10 @@ def make_config_gymnax_generic(
         baseline_name=BASELINE_FULL,
         evosax_algo=evosax_algo,
         evosax_sigma_init=evosax_sigma_init,
+        policy_architecture=policy_architecture,
+        policy_conv_channels=policy_conv_channels,
+        policy_conv_kernel_sizes=policy_conv_kernel_sizes,
+        policy_conv_strides=policy_conv_strides,
         policy_hidden_dims=policy_hidden_dims,
         mutation_exclude_modules=(),
         fixed_mutation_lr=None,
@@ -260,6 +284,10 @@ def make_evosax_control_config_gymnax_generic(
     episodes_per_eval: int = 1,
     evosax_algo: str,
     evosax_sigma_init: float | None = None,
+    policy_architecture: str = "mlp",
+    policy_conv_channels: tuple[int, ...] = (),
+    policy_conv_kernel_sizes: tuple[tuple[int, int], ...] = (),
+    policy_conv_strides: tuple[tuple[int, int], ...] = (),
     policy_hidden_dims: tuple[int, ...] = (32, 32),
     shift_windows: tuple[ShiftWindowConfig, ...] = (),
     wandb_project: str | None = None,
@@ -278,6 +306,10 @@ def make_evosax_control_config_gymnax_generic(
         optimizer_family="evosax",
         evosax_algo=evosax_algo,
         evosax_sigma_init=evosax_sigma_init,
+        policy_architecture=policy_architecture,
+        policy_conv_channels=policy_conv_channels,
+        policy_conv_kernel_sizes=policy_conv_kernel_sizes,
+        policy_conv_strides=policy_conv_strides,
         policy_hidden_dims=policy_hidden_dims,
         wandb_project=wandb_project,
         wandb_group=wandb_group,
@@ -337,6 +369,10 @@ def make_config_brax_generic(
         baseline_name=BASELINE_FULL,
         evosax_algo=evosax_algo,
         evosax_sigma_init=evosax_sigma_init,
+        policy_architecture="mlp",
+        policy_conv_channels=(),
+        policy_conv_kernel_sizes=(),
+        policy_conv_strides=(),
         policy_hidden_dims=policy_hidden_dims,
         mutation_exclude_modules=(),
         fixed_mutation_lr=None,
@@ -397,6 +433,10 @@ def make_config_mujoco_playground_generic(
         baseline_name=BASELINE_FULL,
         evosax_algo=evosax_algo,
         evosax_sigma_init=evosax_sigma_init,
+        policy_architecture="mlp",
+        policy_conv_channels=(),
+        policy_conv_kernel_sizes=(),
+        policy_conv_strides=(),
         policy_hidden_dims=policy_hidden_dims,
         mutation_exclude_modules=(),
         fixed_mutation_lr=None,
@@ -496,6 +536,10 @@ def make_config_nonstationary_gymnax(
     baseline_name: str = BASELINE_FULL,
     evosax_algo: str | None = None,
     evosax_sigma_init: float | None = None,
+    policy_architecture: str = "mlp",
+    policy_conv_channels: tuple[int, ...] = (),
+    policy_conv_kernel_sizes: tuple[tuple[int, int], ...] = (),
+    policy_conv_strides: tuple[tuple[int, int], ...] = (),
     policy_hidden_dims: tuple[int, ...] = (32, 32),
     fixed_mutation_lr: float | None = 0.01,
     wandb_project: str | None = None,
@@ -522,6 +566,10 @@ def make_config_nonstationary_gymnax(
             episodes_per_eval=episodes_per_eval,
             evosax_algo=evosax_algo,
             evosax_sigma_init=evosax_sigma_init,
+            policy_architecture=policy_architecture,
+            policy_conv_channels=policy_conv_channels,
+            policy_conv_kernel_sizes=policy_conv_kernel_sizes,
+            policy_conv_strides=policy_conv_strides,
             policy_hidden_dims=policy_hidden_dims,
             shift_windows=shift_windows,
             wandb_project=wandb_project,
@@ -541,6 +589,10 @@ def make_config_nonstationary_gymnax(
         optimizer_family=optimizer_family,
         evosax_algo=evosax_algo,
         evosax_sigma_init=evosax_sigma_init,
+        policy_architecture=policy_architecture,
+        policy_conv_channels=policy_conv_channels,
+        policy_conv_kernel_sizes=policy_conv_kernel_sizes,
+        policy_conv_strides=policy_conv_strides,
         policy_hidden_dims=policy_hidden_dims,
     )
     return _with_nonstationary_overrides(

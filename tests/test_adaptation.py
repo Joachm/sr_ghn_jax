@@ -30,16 +30,32 @@ from envs import (
     map_action_for_shifts,
     map_observation_for_shifts,
 )
-from experiments._adaptation import gymnax_suite_shift_windows
+from experiments._adaptation import (
+    GYMNAX_MINATAR_SUITE_ENVIRONMENTS,
+    gymnax_minatar_suite_shift_windows,
+    gymnax_suite_shift_windows,
+)
 from experiments._common import build_graphs_and_specs, default_wandb_project, run_experiment, wandb_config_payload
 from evolution import evo_step, init_population, EvoState
 from obs_norm import init_obs_norm
+from policy import apply_policy
 from policy_vectors import flatten_policy_params, policy_num_dims, unflatten_policy_vector
 from srghn import mutate_with_metadata
 from specs import policy_spec_for_task
 
 
 class AdaptationTests(unittest.TestCase):
+    def _make_minatar_config(self, env_id: str = "Asterix-MinAtar", **kwargs):
+        defaults = {
+            "policy_architecture": "cnn_mlp",
+            "policy_conv_channels": (16,),
+            "policy_conv_kernel_sizes": ((3, 3),),
+            "policy_conv_strides": ((1, 1),),
+            "policy_hidden_dims": (128,),
+        }
+        defaults.update(kwargs)
+        return make_config_nonstationary_gymnax(env_id, **defaults)
+
     def test_shift_schedule_window_boundaries(self):
         config = make_config_nonstationary_gymnax(
             "CartPole-v1",
@@ -123,6 +139,19 @@ class AdaptationTests(unittest.TestCase):
             windows = gymnax_suite_shift_windows(env_id)
             self.assertEqual(len(windows), 2)
 
+    def test_minatar_suite_windows_have_two_switches(self):
+        for env_id in GYMNAX_MINATAR_SUITE_ENVIRONMENTS:
+            windows = gymnax_minatar_suite_shift_windows(env_id)
+            self.assertEqual(len(windows), 2)
+
+    def test_minatar_config_uses_cnn_policy_architecture(self):
+        config = self._make_minatar_config()
+        self.assertEqual(config.policy_architecture, "cnn_mlp")
+        self.assertEqual(config.policy_conv_channels, (16,))
+        self.assertEqual(config.policy_conv_kernel_sizes, ((3, 3),))
+        self.assertEqual(config.policy_conv_strides, ((1, 1),))
+        self.assertEqual(config.policy_hidden_dims, (128,))
+
     def test_stationary_configs_stay_stationary(self):
         config = make_config_gymnax_generic("CartPole-v1")
         self.assertEqual(iter_shift_windows(config), ())
@@ -171,6 +200,93 @@ class AdaptationTests(unittest.TestCase):
                 self.assertTrue(jnp.array_equal(expected, actual))
         except ModuleNotFoundError as exc:
             self.skipTest(str(exc))
+
+    def test_minatar_policy_spec_emits_conv_and_dense_shapes(self):
+        try:
+            import gymnax
+
+            config = self._make_minatar_config()
+            env, env_params = gymnax.make(config.env_id)
+            obs_shape = tuple(int(dim) for dim in env.observation_space(env_params).shape)
+            act_dim = int(env.action_space(env_params).n)
+
+            policy_spec = policy_spec_for_task(config)
+            conv_h = obs_shape[0] - 2
+            conv_w = obs_shape[1] - 2
+            flattened_dim = conv_h * conv_w * 16
+
+            self.assertEqual(policy_spec.shapes[0], (3, 3, obs_shape[2], 16))
+            self.assertEqual(policy_spec.shapes[1], (16,))
+            self.assertEqual(policy_spec.shapes[2], (128, flattened_dim))
+            self.assertEqual(policy_spec.shapes[3], (128,))
+            self.assertEqual(policy_spec.shapes[4], (act_dim, 128))
+            self.assertEqual(policy_spec.shapes[5], (act_dim,))
+        except ModuleNotFoundError as exc:
+            self.skipTest(str(exc))
+
+    def test_minatar_policy_vector_round_trip_with_conv_shapes(self):
+        try:
+            config = self._make_minatar_config()
+            policy_spec = policy_spec_for_task(config)
+            params = tuple(
+                jnp.arange(size, dtype=jnp.float32).reshape(shape)
+                for shape, size in zip(policy_spec.shapes, policy_spec.sizes)
+            )
+            vector = flatten_policy_params(params)
+            restored = unflatten_policy_vector(vector, policy_spec)
+            self.assertEqual(vector.shape[0], policy_num_dims(policy_spec))
+            for expected, actual in zip(params, restored):
+                self.assertTrue(jnp.array_equal(expected, actual))
+        except ModuleNotFoundError as exc:
+            self.skipTest(str(exc))
+
+    def test_minatar_discrete_reverse_rule(self):
+        config = self._make_minatar_config(
+            shift_windows=(ShiftWindowConfig(1, 3, "discrete_reverse"),),
+        )
+        reversed_action = map_action_for_shifts(
+            jnp.asarray(0),
+            jnp.asarray(2),
+            config,
+            act_dim=6,
+            is_discrete=True,
+        )
+        self.assertEqual(int(reversed_action), 5)
+
+    def test_apply_policy_mlp_path_matches_previous_behavior(self):
+        config = make_config_gymnax_generic("CartPole-v1")
+        obs = jnp.asarray([[1.0, -2.0]], dtype=jnp.float32)
+        params = (
+            jnp.asarray([[1.0, 2.0], [-1.0, 0.5]], dtype=jnp.float32),
+            jnp.asarray([0.25, -0.75], dtype=jnp.float32),
+            jnp.asarray([[1.5, -0.5]], dtype=jnp.float32),
+            jnp.asarray([0.1], dtype=jnp.float32),
+        )
+        hidden = jnp.tanh(jnp.ravel(obs) @ params[0].T + params[1])
+        expected = hidden @ params[2].T + params[3]
+        actual = apply_policy(params, obs, config, is_discrete=False)
+        self.assertTrue(jnp.allclose(actual, expected))
+
+    def test_apply_policy_cnn_mlp_output_shape(self):
+        config = make_config_gymnax_generic(
+            "Asterix-MinAtar",
+            policy_architecture="cnn_mlp",
+            policy_conv_channels=(16,),
+            policy_conv_kernel_sizes=((3, 3),),
+            policy_conv_strides=((1, 1),),
+            policy_hidden_dims=(8,),
+        )
+        obs = jnp.ones((4, 4, 1), dtype=jnp.float32)
+        params = (
+            jnp.zeros((3, 3, 1, 16), dtype=jnp.float32),
+            jnp.zeros((16,), dtype=jnp.float32),
+            jnp.zeros((8, 64), dtype=jnp.float32),
+            jnp.zeros((8,), dtype=jnp.float32),
+            jnp.zeros((3, 8), dtype=jnp.float32),
+            jnp.zeros((3,), dtype=jnp.float32),
+        )
+        output = apply_policy(params, obs, config, is_discrete=False)
+        self.assertEqual(output.shape, (3,))
 
     def test_evosax_fitness_sign_conversion(self):
         raw_fitness = jnp.asarray([1.5, -2.0], dtype=jnp.float32)
@@ -304,6 +420,22 @@ class AdaptationTests(unittest.TestCase):
             self.assertIn("population_mutation_rate_mean", metrics)
             self.assertIn("active_shift_windows", metrics)
             self.assertEqual(comparison_label(config), f"evosax:{algo}")
+            self.assertEqual(metrics["fitness_best"].shape[0], config.num_generations)
+        except ModuleNotFoundError as exc:
+            self.skipTest(str(exc))
+
+    def test_short_minatar_smoke_run(self):
+        try:
+            config = self._make_minatar_config(
+                pop_size=2,
+                num_generations=1,
+                episode_horizon=8,
+                shift_windows=(ShiftWindowConfig(0, None, "discrete_reverse"),),
+            )
+            graphs, specs = build_graphs_and_specs(config)
+            self.assertGreater(specs.policy_spec.num_nodes, 0)
+            _state, metrics = run_experiment(config)
+            self.assertIn("fitness_best", metrics)
             self.assertEqual(metrics["fitness_best"].shape[0], config.num_generations)
         except ModuleNotFoundError as exc:
             self.skipTest(str(exc))

@@ -34,7 +34,7 @@ def rollout_episode(
             obs_count_t = obs_count_t + active
             obs_shifted = map_observation_for_shifts(obs_t, gen, config)
             obs_in = normalize_obs(obs_shifted, obs_norm_state, clip=config.obs_norm_clip, eps=config.obs_norm_eps)
-            action = apply_policy(policy_params, obs_in, is_discrete=is_discrete)
+            action = apply_policy(policy_params, obs_in, config, is_discrete=is_discrete)
             action = map_action_for_shifts(action, gen, config, act_dim=act_dim, is_discrete=is_discrete)
             if is_discrete:
                 action = jnp.asarray(action, dtype=jnp.int32)
@@ -72,7 +72,7 @@ def rollout_episode(
             obs_count_t = obs_count_t + active
             obs_shifted = map_observation_for_shifts(obs_t, gen, config)
             obs_in = normalize_obs(obs_shifted, obs_norm_state, clip=config.obs_norm_clip, eps=config.obs_norm_eps)
-            action = apply_policy(policy_params, obs_in, is_discrete=is_discrete)
+            action = apply_policy(policy_params, obs_in, config, is_discrete=is_discrete)
             action = map_action_for_shifts(action, gen, config, act_dim=act_dim, is_discrete=is_discrete)
             if is_discrete:
                 action = jnp.asarray(action, dtype=jnp.int32)
