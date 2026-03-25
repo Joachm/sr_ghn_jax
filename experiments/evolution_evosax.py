@@ -125,7 +125,7 @@ def run_evosax(key: jax.random.KeyArray, config, policy_spec):
     metrics_history = []
     for gen_idx in range(config.num_generations):
         gen = jnp.asarray(gen_idx, dtype=jnp.int32)
-        key_eval, key_ask, key_next = jax.random.split(state.key, 3)
+        key_eval, key_ask, key_tell, key_next = jax.random.split(state.key, 4)
         population, ask_state = adapter.ask(key_ask, state.strategy_state)
         eval_keys = jax.random.split(key_eval, config.pop_size)
         fitness, obs_sum, obs_sq_sum, obs_count = jax.vmap(
@@ -138,7 +138,7 @@ def run_evosax(key: jax.random.KeyArray, config, policy_spec):
                 state.obs_norm,
             )
         )(population, eval_keys)
-        next_strategy_state = adapter.tell(population, fitness, ask_state)
+        next_strategy_state = adapter.tell(key_tell, population, fitness, ask_state)
         metrics = _compute_vector_metrics(population, fitness)
         metrics["active_shift_windows"] = _active_shift_windows(gen, config)
         _wandb_log(metrics, gen_idx)

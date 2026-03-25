@@ -30,7 +30,7 @@ from envs import (
     map_observation_for_shifts,
 )
 from experiments._adaptation import gymnax_suite_shift_windows
-from experiments._common import build_graphs_and_specs, run_experiment
+from experiments._common import build_graphs_and_specs, default_wandb_project, run_experiment
 from evolution import evo_step, init_population, EvoState
 from obs_norm import init_obs_norm
 from policy_vectors import flatten_policy_params, policy_num_dims, unflatten_policy_vector
@@ -140,6 +140,8 @@ class AdaptationTests(unittest.TestCase):
         self.assertEqual(srghn_config.num_generations, GYMNAX_SUITE_DEFAULT_NUM_GENERATIONS)
         self.assertEqual(evosax_config.pop_size, GYMNAX_SUITE_DEFAULT_EVALS_PER_GENERATION)
         self.assertEqual(evosax_config.num_generations, GYMNAX_SUITE_DEFAULT_NUM_GENERATIONS)
+        self.assertEqual(default_wandb_project(srghn_config), "srghn_jax")
+        self.assertEqual(default_wandb_project(evosax_config), "sr-ghn_control_cma_es")
 
     def test_policy_vector_round_trip(self):
         try:

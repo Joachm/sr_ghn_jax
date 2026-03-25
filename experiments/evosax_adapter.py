@@ -107,17 +107,44 @@ class EvosaxStrategyAdapter:
         if not config.evosax_algo:
             raise ValueError("config.evosax_algo must be set when optimizer_family='evosax'.")
         strategy_cls = resolve_evosax_strategy(config.evosax_algo)
+        self.solution = jnp.asarray(solution, dtype=jnp.float32)
         self.strategy = _instantiate_strategy(strategy_cls, pop_size=config.pop_size, solution=solution)
         self.params = _override_strategy_params(getattr(self.strategy, "default_params", None), config.evosax_sigma_init)
 
     def init(self, key: jax.random.KeyArray):
         if hasattr(self.strategy, "init"):
-            return self.strategy.init(key, self.params)
-        return self.strategy.initialize(key, self.params)
+            param_names = tuple(inspect.signature(self.strategy.init).parameters.keys())
+            if len(param_names) == 3:
+                return self.strategy.init(key, self.solution, self.params)
+            if len(param_names) == 2:
+                return self.strategy.init(key, self.params)
+            raise TypeError(f"Unsupported evosax init signature: {param_names}")
+        param_names = tuple(inspect.signature(self.strategy.initialize).parameters.keys())
+        if len(param_names) == 2:
+            return self.strategy.initialize(key, self.params)
+        raise TypeError(f"Unsupported evosax initialize signature: {param_names}")
 
     def ask(self, key: jax.random.KeyArray, state):
-        population, next_state = self.strategy.ask(key, state, self.params)
+        param_names = tuple(inspect.signature(self.strategy.ask).parameters.keys())
+        if len(param_names) == 3:
+            population, next_state = self.strategy.ask(key, state, self.params)
+        elif len(param_names) == 2:
+            population, next_state = self.strategy.ask(key, state)
+        else:
+            raise TypeError(f"Unsupported evosax ask signature: {param_names}")
         return jnp.asarray(population, dtype=jnp.float32), next_state
 
-    def tell(self, population: jnp.ndarray, raw_fitness: jnp.ndarray, state):
-        return self.strategy.tell(population, fitness_for_evosax(raw_fitness), state, self.params)
+    def tell(self, key: jax.random.KeyArray, population: jnp.ndarray, raw_fitness: jnp.ndarray, state):
+        fitness = fitness_for_evosax(raw_fitness)
+        param_names = tuple(inspect.signature(self.strategy.tell).parameters.keys())
+        if len(param_names) == 5:
+            result = self.strategy.tell(key, population, fitness, state, self.params)
+        elif len(param_names) == 4:
+            result = self.strategy.tell(population, fitness, state, self.params)
+        elif len(param_names) == 3:
+            result = self.strategy.tell(population, fitness, state)
+        else:
+            raise TypeError(f"Unsupported evosax tell signature: {param_names}")
+        if isinstance(result, tuple):
+            return result[0]
+        return result

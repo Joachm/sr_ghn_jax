@@ -25,6 +25,7 @@ def main():
     parser.add_argument("--parameter-block-size", type=int, default=64)
     parser.add_argument("--mutation-block-ratio", type=float, default=0.125)
     parser.add_argument("--fixed-mutation-lr", type=float, default=0.05)
+    parser.add_argument("--project", default=None)
     parser.add_argument("--output", default=None)
     args = parser.parse_args()
 
@@ -43,13 +44,14 @@ def main():
         baseline_name=args.baseline,
         evosax_algo=args.evosax_algo,
         evosax_sigma_init=args.evosax_sigma_init,
+        wandb_project=args.project,
         fixed_mutation_lr=args.fixed_mutation_lr,
     )
     _, metrics = run_experiment(config)
     artifact = build_run_artifact(config, metrics)
     safe_env_id = args.env_id.replace("/", "_").replace(":", "_")
     label = args.baseline if args.optimizer_family == "srghn" else f"evosax_{args.evosax_algo or 'unknown'}"
-    out_name = args.output or f"nonstationary_gymnax_{safe_env_id}_{args.variant}_{label}_seed{args.seed}.pkl"
+    out_name = args.output or f"nonstationary_gymnax_{safe_env_id}_{args.variant}_{label}_g{config.num_generations}_p{config.pop_size}_seed{args.seed}.pkl"
     save_pickle(out_name, artifact)
 
 

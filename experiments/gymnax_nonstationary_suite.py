@@ -23,11 +23,26 @@ def _safe_name(value: str) -> str:
     return value.replace("/", "_").replace(":", "_")
 
 
+def _label_for_config(config) -> str:
+    if config.optimizer_family == "evosax":
+        return f"evosax_{_safe_name(config.evosax_algo or 'unknown')}"
+    return _safe_name(config.baseline_name)
+
+
+def _namespace_for_config(config) -> str:
+    return (
+        f"{_label_for_config(config)}"
+        f"_g{config.num_generations}"
+        f"_p{config.pop_size}"
+        f"_cpp{config.children_per_parent}"
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run the full nonstationary Gymnax adaptation suite.")
     parser.add_argument("--seeds", nargs="*", type=int, default=None, help="Explicit seed list; defaults to 0..9.")
     parser.add_argument("--output-dir", default="results/gymnax_nonstationary_suite")
-    parser.add_argument("--project", default="srghn-gymnax12")
+    parser.add_argument("--project", default=None)
     parser.add_argument("--optimizer-family", default="srghn", choices=("srghn", "evosax"))
     parser.add_argument("--baseline", default="srghn_full")
     parser.add_argument("--evosax-algo", default=None)
@@ -44,20 +59,11 @@ def main():
     args = parser.parse_args()
 
     seeds = args.seeds or list(range(10))
-    family_dir = args.optimizer_family if args.optimizer_family == "srghn" else f"evosax_{_safe_name(args.evosax_algo or 'unknown')}"
-    output_dir = Path(args.output_dir) / family_dir
-    output_dir.mkdir(parents=True, exist_ok=True)
-    failure_log = output_dir / "failures.log"
+    output_root = Path(args.output_dir)
+    output_root.mkdir(parents=True, exist_ok=True)
 
     for env_id in ENVIRONMENTS:
-        env_dir = output_dir / _safe_name(env_id)
-        env_dir.mkdir(parents=True, exist_ok=True)
         for seed in seeds:
-            out_path = env_dir / f"seed_{seed}.pkl"
-            if args.skip_existing and out_path.exists():
-                print(f"[skip] {env_id} seed={seed} -> {out_path}")
-                continue
-
             config = make_config_nonstationary_gymnax(
                 env_id,
                 seed=seed,
@@ -73,11 +79,20 @@ def main():
                 baseline_name=args.baseline,
                 evosax_algo=args.evosax_algo,
                 evosax_sigma_init=args.evosax_sigma_init,
-                wandb_project=args.project,
+                wandb_project=args.project or ("srghn-gymnax12" if args.optimizer_family == "srghn" else f"sr-ghn_control_{_safe_name(args.evosax_algo or 'unknown')}"),
                 wandb_group=_safe_name(env_id),
                 wandb_name=f"{_safe_name(env_id)}-seed{seed}",
                 fixed_mutation_lr=args.fixed_mutation_lr,
             )
+            suite_dir = output_root / _namespace_for_config(config)
+            suite_dir.mkdir(parents=True, exist_ok=True)
+            failure_log = suite_dir / "failures.log"
+            env_dir = suite_dir / _safe_name(env_id)
+            env_dir.mkdir(parents=True, exist_ok=True)
+            out_path = env_dir / f"seed_{seed}.pkl"
+            if args.skip_existing and out_path.exists():
+                print(f"[skip] {env_id} seed={seed} -> {out_path}")
+                continue
             print(f"[run] env={env_id} seed={seed}")
             try:
                 _, metrics = run_experiment(config)

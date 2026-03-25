@@ -28,6 +28,17 @@ class SpecBundle:
     policy_spec: ParamNodeSpec
 
 
+def _safe_name(value: str) -> str:
+    return value.replace("/", "_").replace(":", "_")
+
+
+def default_wandb_project(config) -> str:
+    if getattr(config, "optimizer_family", "srghn") == "evosax":
+        algo = getattr(config, "evosax_algo", None) or "unknown"
+        return f"sr-ghn_control_{_safe_name(algo)}"
+    return "srghn_jax"
+
+
 def _build_template_srghn(num_self_nodes: int, policy_spec: ParamNodeSpec, config, key) -> SRGHN:
     if config.embedding_dim != config.gnn_hidden_dim:
         raise ValueError("config.embedding_dim must equal config.gnn_hidden_dim.")
@@ -123,7 +134,7 @@ def run_experiment(config):
 
         if wandb.run is None:
             wandb.init(
-                project=config.wandb_project or "srghn_jax",
+                project=config.wandb_project or default_wandb_project(config),
                 group=config.wandb_group,
                 name=config.wandb_name or config.env_id,
                 config=config.__dict__,

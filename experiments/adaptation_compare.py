@@ -124,7 +124,16 @@ def main():
         "results": results,
         "aggregate": aggregate_comparison_results(results),
     }
-    out_name = args.output or f"adaptation_compare_{args.suite}.pkl"
+    if args.output is not None:
+        out_name = args.output
+    else:
+        suffix_parts = []
+        if not args.skip_srghn:
+            suffix_parts.append("srghn")
+        if args.evosax_algos:
+            suffix_parts.append("evosax_" + "_".join(algo.replace("/", "_").replace(":", "_") for algo in args.evosax_algos))
+        suffix = "_".join(suffix_parts) if suffix_parts else "empty"
+        out_name = f"adaptation_compare_{args.suite}_{suffix}.pkl"
     save_pickle(out_name, payload)
 
 
