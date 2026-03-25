@@ -7,10 +7,10 @@ import jax
 import jax.numpy as jnp
 
 from envs import iter_shift_windows, make_env
-from evosax_adapter import EvosaxStrategyAdapter
+from experiments.evosax_adapter import EvosaxStrategyAdapter
 from metrics import compute_vector_metrics
 from obs_norm import init_obs_norm, update_obs_norm
-from policy_vectors import zero_policy_vector
+from experiments.policy_vectors import zero_policy_vector
 from rollout import evaluate_policy_vector_with_obs_stats
 
 
