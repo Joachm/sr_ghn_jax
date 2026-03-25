@@ -1,6 +1,7 @@
 jax
 jaxlib
 equinox
+optax
 gymnax
 brax
 wandb

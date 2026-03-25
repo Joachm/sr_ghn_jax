@@ -17,6 +17,7 @@ python -m experiments.adaptation_compare --suite cartpole --evosax-algos OpenES 
 python plot_adaptation_results.py --input adaptation_compare_cartpole.pkl
 bash run_gymnax_nonstationary_suite.sh --skip-existing
 python -m experiments.gymnax_nonstationary_suite --optimizer-family evosax --evosax-algo OpenES --skip-existing
+python -m baselines.ppo.suite --skip-existing
 ```
 
 MuJoCo Playground runs now also save a replayable solution artifact:
