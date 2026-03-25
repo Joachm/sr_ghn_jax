@@ -9,12 +9,15 @@ from experiments._common import run_experiment
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run a nonstationary Gymnax SR-GHN experiment.")
+    parser = argparse.ArgumentParser(description="Run a nonstationary Gymnax adaptation experiment.")
     parser.add_argument("--env-id", default="CartPole-v1")
     parser.add_argument("--variant", default="cartpole_flip", choices=("cartpole_flip", "cartpole_flip_revert", "cartpole_repeated"))
+    parser.add_argument("--optimizer-family", default="srghn", choices=("srghn", "evosax"))
     parser.add_argument("--baseline", default="srghn_full")
+    parser.add_argument("--evosax-algo", default=None)
+    parser.add_argument("--evosax-sigma-init", type=float, default=None)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--pop-size", type=int, default=30)
+    parser.add_argument("--pop-size", type=int, default=None)
     parser.add_argument("--num-generations", type=int, default=1500)
     parser.add_argument("--episode-horizon", type=int, default=500)
     parser.add_argument("--children-per-parent", type=int, default=2)
@@ -36,13 +39,17 @@ def main():
         parameter_block_size=args.parameter_block_size,
         mutation_block_ratio=args.mutation_block_ratio,
         shift_windows=gymnax_shift_windows(args.variant),
+        optimizer_family=args.optimizer_family,
         baseline_name=args.baseline,
+        evosax_algo=args.evosax_algo,
+        evosax_sigma_init=args.evosax_sigma_init,
         fixed_mutation_lr=args.fixed_mutation_lr,
     )
     _, metrics = run_experiment(config)
     artifact = build_run_artifact(config, metrics)
     safe_env_id = args.env_id.replace("/", "_").replace(":", "_")
-    out_name = args.output or f"nonstationary_gymnax_{safe_env_id}_{args.variant}_{args.baseline}_seed{args.seed}.pkl"
+    label = args.baseline if args.optimizer_family == "srghn" else f"evosax_{args.evosax_algo or 'unknown'}"
+    out_name = args.output or f"nonstationary_gymnax_{safe_env_id}_{args.variant}_{label}_seed{args.seed}.pkl"
     save_pickle(out_name, artifact)
 
 

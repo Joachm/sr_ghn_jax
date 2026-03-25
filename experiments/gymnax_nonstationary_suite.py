@@ -24,14 +24,18 @@ def _safe_name(value: str) -> str:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run the full nonstationary Gymnax SR-GHN suite.")
+    parser = argparse.ArgumentParser(description="Run the full nonstationary Gymnax adaptation suite.")
     parser.add_argument("--seeds", nargs="*", type=int, default=None, help="Explicit seed list; defaults to 0..9.")
     parser.add_argument("--output-dir", default="results/gymnax_nonstationary_suite")
     parser.add_argument("--project", default="srghn-gymnax12")
+    parser.add_argument("--optimizer-family", default="srghn", choices=("srghn", "evosax"))
+    parser.add_argument("--baseline", default="srghn_full")
+    parser.add_argument("--evosax-algo", default=None)
+    parser.add_argument("--evosax-sigma-init", type=float, default=None)
     parser.add_argument("--fixed-mutation-lr", type=float, default=0.01)
     parser.add_argument("--skip-existing", action="store_true")
     parser.add_argument("--num-generations", type=int, default=1500)
-    parser.add_argument("--pop-size", type=int, default=50)
+    parser.add_argument("--pop-size", type=int, default=None)
     parser.add_argument("--children-per-parent", type=int, default=4)
     parser.add_argument("--episodes-per-eval", type=int, default=1)
     parser.add_argument("--episode-horizon", type=int, default=500)
@@ -40,7 +44,8 @@ def main():
     args = parser.parse_args()
 
     seeds = args.seeds or list(range(10))
-    output_dir = Path(args.output_dir)
+    family_dir = args.optimizer_family if args.optimizer_family == "srghn" else f"evosax_{_safe_name(args.evosax_algo or 'unknown')}"
+    output_dir = Path(args.output_dir) / family_dir
     output_dir.mkdir(parents=True, exist_ok=True)
     failure_log = output_dir / "failures.log"
 
@@ -64,6 +69,10 @@ def main():
                 parameter_block_size=args.parameter_block_size,
                 mutation_block_ratio=args.mutation_block_ratio,
                 shift_windows=gymnax_suite_shift_windows(env_id),
+                optimizer_family=args.optimizer_family,
+                baseline_name=args.baseline,
+                evosax_algo=args.evosax_algo,
+                evosax_sigma_init=args.evosax_sigma_init,
                 wandb_project=args.project,
                 wandb_group=_safe_name(env_id),
                 wandb_name=f"{_safe_name(env_id)}-seed{seed}",

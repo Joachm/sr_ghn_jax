@@ -8,6 +8,7 @@ import jax
 import jax.numpy as jnp
 
 from evolution import run_jit
+from evolution_evosax import run_evosax
 from graphs import GraphSpec, make_chain_graph, make_policy_hierarchical_graph, make_self_hierarchical_graph
 from gnn import GraphEncoder
 from hypernets import DeterministicHead, StochasticHyper
@@ -110,8 +111,13 @@ def build_graphs_and_specs(config) -> tuple[GraphBundle, SpecBundle]:
 
 
 def run_experiment(config):
-    graphs, specs = build_graphs_and_specs(config)
     key = jax.random.key(config.seed)
+    graphs = None
+    specs = None
+    if config.optimizer_family == "srghn":
+        graphs, specs = build_graphs_and_specs(config)
+    else:
+        specs = SpecBundle(self_spec=ParamNodeSpec((), (), 0, 0, (), (), (), (), None), policy_spec=policy_spec_for_task(config))
     try:
         import wandb
 
@@ -124,9 +130,14 @@ def run_experiment(config):
             )
     except Exception:
         wandb = None
-    graph_tuple = (graphs.self_graph, graphs.policy_graph)
-    spec_tuple = (specs.self_spec, specs.policy_spec)
-    final_state, metrics = run_jit(key, config, graph_tuple, spec_tuple)
+    if config.optimizer_family == "srghn":
+        graph_tuple = (graphs.self_graph, graphs.policy_graph)
+        spec_tuple = (specs.self_spec, specs.policy_spec)
+        final_state, metrics = run_jit(key, config, graph_tuple, spec_tuple)
+    elif config.optimizer_family == "evosax":
+        final_state, metrics = run_evosax(key, config, specs.policy_spec)
+    else:
+        raise ValueError(f"Unknown optimizer_family: {config.optimizer_family}")
     try:
         if wandb is not None:
             wandb.finish()
