@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from typing import Tuple
 
 import equinox as eqx
@@ -8,7 +8,9 @@ import jax
 import jax.numpy as jnp
 
 from evolution import run_jit
+from experiments.evosax_adapter import EvosaxStrategyAdapter
 from experiments.evolution_evosax import run_evosax
+from experiments.policy_vectors import policy_num_dims, zero_policy_vector
 from graphs import GraphSpec, make_chain_graph, make_policy_hierarchical_graph, make_self_hierarchical_graph
 from gnn import GraphEncoder
 from hypernets import DeterministicHead, StochasticHyper
@@ -37,6 +39,23 @@ def default_wandb_project(config) -> str:
         algo = getattr(config, "evosax_algo", None) or "unknown"
         return f"sr-ghn_control_{_safe_name(algo)}"
     return "srghn_jax"
+
+
+def wandb_config_payload(config, policy_spec=None) -> dict:
+    payload = asdict(config) if is_dataclass(config) else dict(config.__dict__)
+    if getattr(config, "optimizer_family", "srghn") != "evosax":
+        return payload
+    sigma_override = payload.pop("evosax_sigma_init", None)
+    payload["evosax_sigma_init_override"] = sigma_override
+    if policy_spec is None:
+        return payload
+    solution = zero_policy_vector(policy_spec)
+    adapter = EvosaxStrategyAdapter(config, solution=solution)
+    payload["policy_num_dims"] = int(policy_num_dims(policy_spec))
+    payload["evosax_effective_params"] = adapter.effective_params_dict()
+    payload["evosax_init_signature"] = list(adapter.init_signature)
+    payload["evosax_requires_population_init"] = bool(adapter.requires_population_init)
+    return payload
 
 
 def _build_template_srghn(num_self_nodes: int, policy_spec: ParamNodeSpec, config, key) -> SRGHN:
@@ -137,7 +156,7 @@ def run_experiment(config):
                 project=config.wandb_project or default_wandb_project(config),
                 group=config.wandb_group,
                 name=config.wandb_name or config.env_id,
-                config=config.__dict__,
+                config=wandb_config_payload(config, specs.policy_spec),
             )
     except Exception:
         wandb = None

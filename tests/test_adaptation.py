@@ -31,7 +31,7 @@ from envs import (
     map_observation_for_shifts,
 )
 from experiments._adaptation import gymnax_suite_shift_windows
-from experiments._common import build_graphs_and_specs, default_wandb_project, run_experiment
+from experiments._common import build_graphs_and_specs, default_wandb_project, run_experiment, wandb_config_payload
 from evolution import evo_step, init_population, EvoState
 from obs_norm import init_obs_norm
 from policy_vectors import flatten_policy_params, policy_num_dims, unflatten_policy_vector
@@ -141,6 +141,8 @@ class AdaptationTests(unittest.TestCase):
         self.assertEqual(srghn_config.num_generations, GYMNAX_SUITE_DEFAULT_NUM_GENERATIONS)
         self.assertEqual(evosax_config.pop_size, GYMNAX_SUITE_DEFAULT_EVALS_PER_GENERATION)
         self.assertEqual(evosax_config.num_generations, GYMNAX_SUITE_DEFAULT_NUM_GENERATIONS)
+        self.assertFalse(hasattr(evosax_config, "baseline_name"))
+        self.assertFalse(hasattr(evosax_config, "parameter_block_size"))
         self.assertEqual(default_wandb_project(srghn_config), "srghn_jax")
         self.assertEqual(default_wandb_project(evosax_config), "sr-ghn_control_cma_es")
 
@@ -184,6 +186,57 @@ class AdaptationTests(unittest.TestCase):
             self.skipTest(str(exc))
         with self.assertRaises(ValueError):
             resolve_evosax_strategy("definitely_not_a_real_strategy")
+
+    def test_population_based_evosax_adapter_init(self):
+        try:
+            if "samr_ga" not in available_evosax_algorithms():
+                self.skipTest("samr_ga is not available in the installed evosax version.")
+            from evosax_adapter import EvosaxStrategyAdapter
+
+            config = make_config_nonstationary_gymnax(
+                "CartPole-v1",
+                optimizer_family="evosax",
+                evosax_algo="samr_ga",
+                pop_size=4,
+                num_generations=2,
+            )
+            adapter = EvosaxStrategyAdapter(config, solution=jnp.zeros((3,), dtype=jnp.float32))
+            self.assertTrue(adapter.requires_population_init)
+            population = adapter.sample_initial_population(jax.random.key(0))
+            self.assertEqual(population.shape, (config.pop_size, 3))
+            state = adapter.init(
+                jax.random.key(1),
+                population,
+                jnp.zeros((config.pop_size,), dtype=jnp.float32),
+            )
+            asked_population, ask_state = adapter.ask(jax.random.key(2), state)
+            self.assertEqual(asked_population.shape, (config.pop_size, 3))
+            next_state = adapter.tell(
+                jax.random.key(3),
+                asked_population,
+                jnp.zeros((config.pop_size,), dtype=jnp.float32),
+                ask_state,
+            )
+            self.assertIsNotNone(next_state)
+        except ModuleNotFoundError as exc:
+            self.skipTest(str(exc))
+
+    def test_evosax_wandb_payload_uses_effective_params(self):
+        try:
+            config = make_config_nonstationary_gymnax(
+                "CartPole-v1",
+                optimizer_family="evosax",
+                evosax_algo="open_es",
+            )
+            policy_spec = policy_spec_for_task(config)
+            payload = wandb_config_payload(config, policy_spec)
+            self.assertNotIn("baseline_name", payload)
+            self.assertIn("evosax_sigma_init_override", payload)
+            self.assertIn("evosax_effective_params", payload)
+            self.assertIn("policy_num_dims", payload)
+            self.assertIsInstance(payload["evosax_effective_params"], dict)
+        except ModuleNotFoundError as exc:
+            self.skipTest(str(exc))
 
     def test_mutation_metadata_is_finite(self):
         try:

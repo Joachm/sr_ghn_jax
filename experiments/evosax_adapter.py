@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import is_dataclass, replace
 import importlib
 import inspect
+import math
 
 import jax
 import jax.numpy as jnp
@@ -36,6 +37,44 @@ def _override_strategy_params(params, sigma_init: float | None):
         if changed:
             return updated
     return params
+
+
+def _scalar_from_value(value, default: float) -> float:
+    try:
+        scalar = float(jax.device_get(value))
+    except Exception:
+        return default
+    if not math.isfinite(scalar):
+        return default
+    return scalar
+
+
+def _extract_sigma_like(params, default: float = 1.0) -> float:
+    if params is None:
+        return default
+    for field_name in ("sigma_init", "init_std", "std_init", "sigma"):
+        if hasattr(params, field_name):
+            return _scalar_from_value(getattr(params, field_name), default)
+    return default
+
+
+def _to_python(value):
+    if isinstance(value, dict):
+        return {str(k): _to_python(v) for k, v in value.items()}
+    if isinstance(value, tuple) and hasattr(value, "_fields"):
+        return {field: _to_python(getattr(value, field)) for field in value._fields}
+    if is_dataclass(value):
+        return {field: _to_python(getattr(value, field)) for field in value.__dataclass_fields__}
+    if isinstance(value, (list, tuple)):
+        return [_to_python(v) for v in value]
+    if hasattr(value, "shape"):
+        arr = jax.device_get(value)
+        if getattr(arr, "ndim", 0) == 0:
+            return _scalar_from_value(arr, 0.0)
+        return arr.tolist()
+    if isinstance(value, (bool, int, float, str)) or value is None:
+        return value
+    return str(value)
 
 
 def _normalize_name(name: str) -> str:
@@ -108,24 +147,63 @@ class EvosaxStrategyAdapter:
             raise ValueError("config.evosax_algo must be set when optimizer_family='evosax'.")
         strategy_cls = resolve_evosax_strategy(config.evosax_algo)
         self.solution = jnp.asarray(solution, dtype=jnp.float32)
-        self.strategy = _instantiate_strategy(strategy_cls, pop_size=config.pop_size, solution=solution)
+        self.pop_size = int(config.pop_size)
+        self.algo_name = config.evosax_algo
+        self.strategy = _instantiate_strategy(strategy_cls, pop_size=self.pop_size, solution=solution)
         self.params = _override_strategy_params(getattr(self.strategy, "default_params", None), config.evosax_sigma_init)
+        self._init_param_names = self._method_param_names("init", "initialize")
+        self._ask_param_names = self._method_param_names("ask")
+        self._tell_param_names = self._method_param_names("tell")
 
-    def init(self, key: jax.random.KeyArray):
+    def _method_param_names(self, *method_names: str) -> tuple[str, ...]:
+        for method_name in method_names:
+            if hasattr(self.strategy, method_name):
+                return tuple(inspect.signature(getattr(self.strategy, method_name)).parameters.keys())
+        return ()
+
+    @property
+    def init_signature(self) -> tuple[str, ...]:
+        return self._init_param_names
+
+    @property
+    def requires_population_init(self) -> bool:
+        return self._init_param_names == ("key", "population", "fitness", "params")
+
+    def sample_initial_population(self, key: jax.random.KeyArray) -> jnp.ndarray:
+        sigma = _extract_sigma_like(self.params, default=1.0)
+        noise = jax.random.normal(key, (self.pop_size, self.solution.shape[0]), dtype=jnp.float32)
+        return self.solution[None, :] + jnp.asarray(sigma, dtype=jnp.float32) * noise
+
+    def effective_params_dict(self) -> dict:
+        return _to_python(self.params)
+
+    def init(
+        self,
+        key: jax.random.KeyArray,
+        population: jnp.ndarray | None = None,
+        raw_fitness: jnp.ndarray | None = None,
+    ):
         if hasattr(self.strategy, "init"):
-            param_names = tuple(inspect.signature(self.strategy.init).parameters.keys())
-            if len(param_names) == 3:
+            param_names = self._init_param_names
+            if param_names == ("key", "mean", "params"):
                 return self.strategy.init(key, self.solution, self.params)
-            if len(param_names) == 2:
+            if param_names == ("key", "params"):
                 return self.strategy.init(key, self.params)
+            if param_names == ("key", "population", "fitness", "params"):
+                if population is None or raw_fitness is None:
+                    raise ValueError(
+                        f"Strategy '{self.algo_name}' requires initial population and fitness before init."
+                    )
+                fitness = fitness_for_evosax(raw_fitness)
+                return self.strategy.init(key, population, fitness, self.params)
             raise TypeError(f"Unsupported evosax init signature: {param_names}")
-        param_names = tuple(inspect.signature(self.strategy.initialize).parameters.keys())
-        if len(param_names) == 2:
+        param_names = self._init_param_names
+        if param_names == ("key", "params"):
             return self.strategy.initialize(key, self.params)
         raise TypeError(f"Unsupported evosax initialize signature: {param_names}")
 
     def ask(self, key: jax.random.KeyArray, state):
-        param_names = tuple(inspect.signature(self.strategy.ask).parameters.keys())
+        param_names = self._ask_param_names
         if len(param_names) == 3:
             population, next_state = self.strategy.ask(key, state, self.params)
         elif len(param_names) == 2:
@@ -136,7 +214,7 @@ class EvosaxStrategyAdapter:
 
     def tell(self, key: jax.random.KeyArray, population: jnp.ndarray, raw_fitness: jnp.ndarray, state):
         fitness = fitness_for_evosax(raw_fitness)
-        param_names = tuple(inspect.signature(self.strategy.tell).parameters.keys())
+        param_names = self._tell_param_names
         if len(param_names) == 5:
             result = self.strategy.tell(key, population, fitness, state, self.params)
         elif len(param_names) == 4:

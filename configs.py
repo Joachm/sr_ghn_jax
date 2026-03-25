@@ -69,6 +69,30 @@ class ExperimentConfig:
     obs_norm_eps: float
 
 
+@dataclass(frozen=True)
+class EvosaxControlConfig:
+    task_name: str
+    seed: int
+    pop_size: int
+    children_per_parent: int
+    num_generations: int
+    episode_horizon: int
+    episodes_per_eval: int
+    shift_windows: tuple[ShiftWindowConfig, ...]
+    optimizer_family: str
+    evosax_algo: str
+    evosax_sigma_init: float | None
+    policy_hidden_dims: tuple[int, ...]
+    wandb_project: str | None
+    wandb_group: str | None
+    wandb_name: str | None
+    env_backend: str
+    env_id: str
+    brax_backend: str | None
+    obs_norm_clip: float
+    obs_norm_eps: float
+
+
 def make_config_cartpole_switch(
     *,
     parameter_block_size: int = 64,
@@ -174,13 +198,13 @@ def make_config_gymnax_generic(
     episode_horizon: int = 500,
     children_per_parent: int = 2,
     episodes_per_eval: int = 1,
-        child_factor: float = 0.0,
-        parameter_block_size: int = 1024,
-        mutation_block_ratio: float = 1.,
-        optimizer_family: str = "srghn",
-        evosax_algo: str | None = None,
-        evosax_sigma_init: float | None = None,
-        policy_hidden_dims: tuple[int, ...] = (32, 32),
+    child_factor: float = 0.0,
+    parameter_block_size: int = 1024,
+    mutation_block_ratio: float = 1.,
+    optimizer_family: str = "srghn",
+    evosax_algo: str | None = None,
+    evosax_sigma_init: float | None = None,
+    policy_hidden_dims: tuple[int, ...] = (32, 32),
 ) -> ExperimentConfig:
     return ExperimentConfig(
         task_name="gymnax_generic",
@@ -217,6 +241,47 @@ def make_config_gymnax_generic(
         wandb_project=None,
         wandb_group=None,
         wandb_name=None,
+        env_backend="gymnax",
+        env_id=env_id,
+        brax_backend=None,
+        obs_norm_clip=5.0,
+        obs_norm_eps=1e-8,
+    )
+
+
+def make_evosax_control_config_gymnax_generic(
+    env_id: str,
+    *,
+    seed: int = 0,
+    pop_size: int = 30,
+    num_generations: int = 300,
+    episode_horizon: int = 500,
+    children_per_parent: int = 2,
+    episodes_per_eval: int = 1,
+    evosax_algo: str,
+    evosax_sigma_init: float | None = None,
+    policy_hidden_dims: tuple[int, ...] = (32, 32),
+    shift_windows: tuple[ShiftWindowConfig, ...] = (),
+    wandb_project: str | None = None,
+    wandb_group: str | None = None,
+    wandb_name: str | None = None,
+) -> EvosaxControlConfig:
+    return EvosaxControlConfig(
+        task_name="gymnax_generic",
+        seed=seed,
+        pop_size=pop_size,
+        children_per_parent=children_per_parent,
+        num_generations=num_generations,
+        episode_horizon=episode_horizon,
+        episodes_per_eval=episodes_per_eval,
+        shift_windows=shift_windows,
+        optimizer_family="evosax",
+        evosax_algo=evosax_algo,
+        evosax_sigma_init=evosax_sigma_init,
+        policy_hidden_dims=policy_hidden_dims,
+        wandb_project=wandb_project,
+        wandb_group=wandb_group,
+        wandb_name=wandb_name,
         env_backend="gymnax",
         env_id=env_id,
         brax_backend=None,
@@ -436,7 +501,7 @@ def make_config_nonstationary_gymnax(
     wandb_project: str | None = None,
     wandb_group: str | None = None,
     wandb_name: str | None = None,
-) -> ExperimentConfig:
+) -> ExperimentConfig | EvosaxControlConfig:
     resolved_pop_size = (
         gymnax_control_pop_size(children_per_parent)
         if optimizer_family == "evosax" and pop_size is None
@@ -444,6 +509,25 @@ def make_config_nonstationary_gymnax(
         if pop_size is None
         else pop_size
     )
+    if optimizer_family == "evosax":
+        if not evosax_algo:
+            raise ValueError("evosax_algo must be set when optimizer_family='evosax'.")
+        return make_evosax_control_config_gymnax_generic(
+            env_id,
+            seed=seed,
+            pop_size=resolved_pop_size,
+            num_generations=num_generations,
+            episode_horizon=episode_horizon,
+            children_per_parent=children_per_parent,
+            episodes_per_eval=episodes_per_eval,
+            evosax_algo=evosax_algo,
+            evosax_sigma_init=evosax_sigma_init,
+            policy_hidden_dims=policy_hidden_dims,
+            shift_windows=shift_windows,
+            wandb_project=wandb_project,
+            wandb_group=wandb_group,
+            wandb_name=wandb_name,
+        )
     config = make_config_gymnax_generic(
         env_id,
         seed=seed,
@@ -459,20 +543,6 @@ def make_config_nonstationary_gymnax(
         evosax_sigma_init=evosax_sigma_init,
         policy_hidden_dims=policy_hidden_dims,
     )
-    if optimizer_family == "evosax":
-        return _with_nonstationary_overrides(
-            config,
-            shift_windows=shift_windows,
-            optimizer_family=optimizer_family,
-            evosax_algo=evosax_algo,
-            evosax_sigma_init=evosax_sigma_init,
-            baseline_name=baseline_name,
-            fixed_mutation_lr=None,
-            mutation_exclude_modules=(),
-            wandb_project=wandb_project,
-            wandb_group=wandb_group,
-            wandb_name=wandb_name,
-        )
     return _with_nonstationary_overrides(
         config,
         shift_windows=shift_windows,
