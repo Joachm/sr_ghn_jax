@@ -8,7 +8,7 @@ import jax
 import jax.numpy as jnp
 
 from evolution import run_jit
-from evolution_evosax import run_evosax
+from experiments.evolution_evosax import run_evosax
 from graphs import GraphSpec, make_chain_graph, make_policy_hierarchical_graph, make_self_hierarchical_graph
 from gnn import GraphEncoder
 from hypernets import DeterministicHead, StochasticHyper
