@@ -16,6 +16,11 @@ BASELINE_FROZEN_MUTATION = "frozen_mutation"
 BASELINE_FIXED_LR = "fixed_lr"
 BASELINE_NO_SELF_REFERENCE = "no_self_reference"
 
+GYMNAX_SUITE_DEFAULT_POP_SIZE = 50
+GYMNAX_SUITE_DEFAULT_CHILDREN_PER_PARENT = 4
+GYMNAX_SUITE_DEFAULT_NUM_GENERATIONS = 1500
+GYMNAX_SUITE_DEFAULT_EVALS_PER_GENERATION = GYMNAX_SUITE_DEFAULT_POP_SIZE * (1 + GYMNAX_SUITE_DEFAULT_CHILDREN_PER_PARENT)
+
 
 @dataclass(frozen=True)
 class ExperimentConfig:
@@ -43,7 +48,11 @@ class ExperimentConfig:
     switch_gen_end: int | None
     switch_rule: str | None
     shift_windows: tuple[ShiftWindowConfig, ...]
+    optimizer_family: str
     baseline_name: str
+    evosax_algo: str | None
+    evosax_sigma_init: float | None
+    policy_hidden_dims: tuple[int, ...]
     mutation_exclude_modules: tuple[str, ...]
     fixed_mutation_lr: float | None
     wandb_project: str | None
@@ -86,7 +95,11 @@ def make_config_cartpole_switch(
         switch_gen_end=1200,
         switch_rule="cartpole_flip",
         shift_windows=(ShiftWindowConfig(600, 1200, "cartpole_flip"),),
+        optimizer_family="srghn",
         baseline_name=BASELINE_FULL,
+        evosax_algo=None,
+        evosax_sigma_init=None,
+        policy_hidden_dims=(32,),
         mutation_exclude_modules=(),
         fixed_mutation_lr=None,
         wandb_project=None,
@@ -130,7 +143,11 @@ def make_config_ant_brax(
         switch_gen_end=None,
         switch_rule=None,
         shift_windows=(),
+        optimizer_family="srghn",
         baseline_name=BASELINE_FULL,
+        evosax_algo=None,
+        evosax_sigma_init=None,
+        policy_hidden_dims=(32, 32, 32),
         mutation_exclude_modules=(),
         fixed_mutation_lr=None,
         wandb_project=None,
@@ -153,9 +170,13 @@ def make_config_gymnax_generic(
     episode_horizon: int = 500,
     children_per_parent: int = 2,
     episodes_per_eval: int = 1,
-    child_factor: float = 0.0,
-    parameter_block_size: int = 1024,
-    mutation_block_ratio: float = 1.,
+        child_factor: float = 0.0,
+        parameter_block_size: int = 1024,
+        mutation_block_ratio: float = 1.,
+        optimizer_family: str = "srghn",
+        evosax_algo: str | None = None,
+        evosax_sigma_init: float | None = None,
+        policy_hidden_dims: tuple[int, ...] = (32, 32),
 ) -> ExperimentConfig:
     return ExperimentConfig(
         task_name="gymnax_generic",
@@ -182,7 +203,11 @@ def make_config_gymnax_generic(
         switch_gen_end=None,
         switch_rule=None,
         shift_windows=(),
+        optimizer_family=optimizer_family,
         baseline_name=BASELINE_FULL,
+        evosax_algo=evosax_algo,
+        evosax_sigma_init=evosax_sigma_init,
+        policy_hidden_dims=policy_hidden_dims,
         mutation_exclude_modules=(),
         fixed_mutation_lr=None,
         wandb_project=None,
@@ -209,6 +234,10 @@ def make_config_brax_generic(
     brax_backend: str | None = None,
     parameter_block_size: int = 64,
     mutation_block_ratio: float = 0.125,
+    optimizer_family: str = "srghn",
+    evosax_algo: str | None = None,
+    evosax_sigma_init: float | None = None,
+    policy_hidden_dims: tuple[int, ...] = (32, 32, 32),
 ) -> ExperimentConfig:
     return ExperimentConfig(
         task_name="brax_generic",
@@ -235,7 +264,11 @@ def make_config_brax_generic(
         switch_gen_end=None,
         switch_rule=None,
         shift_windows=(),
+        optimizer_family=optimizer_family,
         baseline_name=BASELINE_FULL,
+        evosax_algo=evosax_algo,
+        evosax_sigma_init=evosax_sigma_init,
+        policy_hidden_dims=policy_hidden_dims,
         mutation_exclude_modules=(),
         fixed_mutation_lr=None,
         wandb_project=None,
@@ -261,6 +294,10 @@ def make_config_mujoco_playground_generic(
     child_factor: float = 0.0,
     parameter_block_size: int = 4096,
     mutation_block_ratio: float = 1.,
+    optimizer_family: str = "srghn",
+    evosax_algo: str | None = None,
+    evosax_sigma_init: float | None = None,
+    policy_hidden_dims: tuple[int, ...] = (64, 64, 64),
 ) -> ExperimentConfig:
     return ExperimentConfig(
         task_name="mujoco_playground_generic",
@@ -287,7 +324,11 @@ def make_config_mujoco_playground_generic(
         switch_gen_end=None,
         switch_rule=None,
         shift_windows=(),
+        optimizer_family=optimizer_family,
         baseline_name=BASELINE_FULL,
+        evosax_algo=evosax_algo,
+        evosax_sigma_init=evosax_sigma_init,
+        policy_hidden_dims=policy_hidden_dims,
         mutation_exclude_modules=(),
         fixed_mutation_lr=None,
         wandb_project=None,
@@ -306,6 +347,9 @@ def _with_nonstationary_overrides(
     *,
     shift_windows: tuple[ShiftWindowConfig, ...],
     baseline_name: str = BASELINE_FULL,
+    optimizer_family: str | None = None,
+    evosax_algo: str | None = None,
+    evosax_sigma_init: float | None = None,
     fixed_mutation_lr: float | None = None,
     mutation_exclude_modules: tuple[str, ...] = (),
     wandb_project: str | None = None,
@@ -316,7 +360,10 @@ def _with_nonstationary_overrides(
         **{
             **config.__dict__,
             "shift_windows": shift_windows,
+            "optimizer_family": config.optimizer_family if optimizer_family is None else optimizer_family,
             "baseline_name": baseline_name,
+            "evosax_algo": config.evosax_algo if evosax_algo is None else evosax_algo,
+            "evosax_sigma_init": config.evosax_sigma_init if evosax_sigma_init is None else evosax_sigma_init,
             "fixed_mutation_lr": fixed_mutation_lr,
             "mutation_exclude_modules": mutation_exclude_modules,
             "wandb_project": wandb_project,
@@ -368,34 +415,66 @@ def make_config_nonstationary_gymnax(
     env_id: str,
     *,
     seed: int = 0,
-    pop_size: int = 50,
-    num_generations: int = 1500,
+    pop_size: int | None = None,
+    num_generations: int = GYMNAX_SUITE_DEFAULT_NUM_GENERATIONS,
     episode_horizon: int = 500,
     children_per_parent: int = 4,
     episodes_per_eval: int = 1,
     parameter_block_size: int = 1024,
     mutation_block_ratio: float = 1.,
     shift_windows: tuple[ShiftWindowConfig, ...] = (ShiftWindowConfig(600, 1200, "cartpole_flip"),),
+    optimizer_family: str = "srghn",
     baseline_name: str = BASELINE_FULL,
+    evosax_algo: str | None = None,
+    evosax_sigma_init: float | None = None,
+    policy_hidden_dims: tuple[int, ...] = (32, 32),
     fixed_mutation_lr: float | None = 0.01,
     wandb_project: str | None = None,
     wandb_group: str | None = None,
     wandb_name: str | None = None,
 ) -> ExperimentConfig:
+    resolved_pop_size = (
+        GYMNAX_SUITE_DEFAULT_EVALS_PER_GENERATION
+        if optimizer_family == "evosax" and pop_size is None
+        else GYMNAX_SUITE_DEFAULT_POP_SIZE
+        if pop_size is None
+        else pop_size
+    )
     config = make_config_gymnax_generic(
         env_id,
         seed=seed,
-        pop_size=pop_size,
+        pop_size=resolved_pop_size,
         num_generations=num_generations,
         episode_horizon=episode_horizon,
         children_per_parent=children_per_parent,
         episodes_per_eval=episodes_per_eval,
         parameter_block_size=parameter_block_size,
         mutation_block_ratio=mutation_block_ratio,
+        optimizer_family=optimizer_family,
+        evosax_algo=evosax_algo,
+        evosax_sigma_init=evosax_sigma_init,
+        policy_hidden_dims=policy_hidden_dims,
     )
+    if optimizer_family == "evosax":
+        return _with_nonstationary_overrides(
+            config,
+            shift_windows=shift_windows,
+            optimizer_family=optimizer_family,
+            evosax_algo=evosax_algo,
+            evosax_sigma_init=evosax_sigma_init,
+            baseline_name=baseline_name,
+            fixed_mutation_lr=None,
+            mutation_exclude_modules=(),
+            wandb_project=wandb_project,
+            wandb_group=wandb_group,
+            wandb_name=wandb_name,
+        )
     return _with_nonstationary_overrides(
         config,
         shift_windows=shift_windows,
+        optimizer_family=optimizer_family,
+        evosax_algo=evosax_algo,
+        evosax_sigma_init=evosax_sigma_init,
         wandb_project=wandb_project,
         wandb_group=wandb_group,
         wandb_name=wandb_name,

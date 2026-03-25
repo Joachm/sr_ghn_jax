@@ -6,6 +6,7 @@ import jax.numpy as jnp
 from envs import apply_reward_shifts, make_env, map_action_for_shifts, map_observation_for_shifts
 from obs_norm import normalize_obs
 from policy import apply_policy
+from policy_vectors import unflatten_policy_vector
 from srghn import make_policy
 
 
@@ -129,6 +130,36 @@ def evaluate_individual_with_obs_stats(
     obs_norm_state=None,
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     policy_params = make_policy(srghn)
+    keys = jax.random.split(key, config.episodes_per_eval)
+    returns, obs_sum, obs_sq_sum, obs_count = jax.vmap(
+        lambda k: rollout_episode(policy_params, k, gen, config, obs_norm_state)
+    )(keys)
+    return jnp.mean(returns), jnp.sum(obs_sum, axis=0), jnp.sum(obs_sq_sum, axis=0), jnp.sum(obs_count, axis=0)
+
+
+def evaluate_policy_vector(
+    policy_vector: jnp.ndarray,
+    key: jax.random.KeyArray,
+    gen: jnp.ndarray,
+    config,
+    policy_spec,
+    obs_norm_state=None,
+) -> jnp.ndarray:
+    policy_params = unflatten_policy_vector(policy_vector, policy_spec)
+    keys = jax.random.split(key, config.episodes_per_eval)
+    returns, _, _, _ = jax.vmap(lambda k: rollout_episode(policy_params, k, gen, config, obs_norm_state))(keys)
+    return jnp.mean(returns)
+
+
+def evaluate_policy_vector_with_obs_stats(
+    policy_vector: jnp.ndarray,
+    key: jax.random.KeyArray,
+    gen: jnp.ndarray,
+    config,
+    policy_spec,
+    obs_norm_state=None,
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    policy_params = unflatten_policy_vector(policy_vector, policy_spec)
     keys = jax.random.split(key, config.episodes_per_eval)
     returns, obs_sum, obs_sq_sum, obs_count = jax.vmap(
         lambda k: rollout_episode(policy_params, k, gen, config, obs_norm_state)

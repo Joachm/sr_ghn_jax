@@ -290,15 +290,16 @@ def _load_mujoco_playground_env(env_id: str):
 
 def policy_spec_for_task(config) -> ParamNodeSpec:
     task = config.task_name.lower()
+    hidden_dims = tuple(getattr(config, "policy_hidden_dims", ()))
     if task == "cartpole_switch":
-        shapes = _mlp_param_shapes(4, (32,), 2)
+        shapes = _mlp_param_shapes(4, hidden_dims or (32,), 2)
     elif task == "ant_brax":
         from brax import envs
 
         env = envs.create(config.env_id)
         obs_dim = int(env.observation_size)
         act_dim = int(env.action_size)
-        shapes = _mlp_param_shapes(obs_dim, (32, 32, 32), act_dim)
+        shapes = _mlp_param_shapes(obs_dim, hidden_dims or (32, 32, 32), act_dim)
     elif task == "brax_generic":
         from brax import envs
 
@@ -308,7 +309,7 @@ def policy_spec_for_task(config) -> ParamNodeSpec:
             env = envs.create(config.env_id, backend=config.brax_backend)
         obs_dim = int(env.observation_size)
         act_dim = int(env.action_size)
-        shapes = _mlp_param_shapes(obs_dim, (32, 32, 32), act_dim)
+        shapes = _mlp_param_shapes(obs_dim, hidden_dims or (32, 32, 32), act_dim)
     elif task == "gymnax_generic":
         import gymnax
 
@@ -321,12 +322,12 @@ def policy_spec_for_task(config) -> ParamNodeSpec:
             act_dim = int(action_space.n)
         else:
             act_dim = int(prod(action_space.shape))
-        shapes = _mlp_param_shapes(obs_dim, (32,32), act_dim)
+        shapes = _mlp_param_shapes(obs_dim, hidden_dims or (32, 32), act_dim)
     elif task == "mujoco_playground_generic":
         env = _load_mujoco_playground_env(config.env_id)
         obs_dim = _infer_obs_dim(env)
         act_dim = _infer_action_dim(env)
-        shapes = _mlp_param_shapes(obs_dim, (64, 64, 64), act_dim)
+        shapes = _mlp_param_shapes(obs_dim, hidden_dims or (64, 64, 64), act_dim)
     else:
         raise ValueError(f"Unknown task_name: {config.task_name}")
 

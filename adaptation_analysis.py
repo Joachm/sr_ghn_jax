@@ -16,6 +16,13 @@ def _to_host(value):
     return jax.device_get(value)
 
 
+def comparison_label(config) -> str:
+    if getattr(config, "optimizer_family", "srghn") == "evosax":
+        algo = getattr(config, "evosax_algo", None) or "unknown"
+        return f"evosax:{algo}"
+    return config.baseline_name
+
+
 def summarize_shift_window(
     fitness_series: jnp.ndarray,
     shift_start: int,
@@ -70,7 +77,7 @@ def summarize_run(metrics: dict[str, Any], config) -> dict[str, Any]:
             }
         )
     return {
-        "baseline_name": config.baseline_name,
+        "baseline_name": comparison_label(config),
         "env_id": config.env_id,
         "shift_windows": [asdict(window) for window in iter_shift_windows(config)],
         "shift_summaries": shift_summaries,
@@ -105,7 +112,7 @@ def _aggregate_series(series_list: list[jnp.ndarray]) -> dict[str, Any]:
 def aggregate_comparison_results(results: list[dict[str, Any]]) -> dict[str, Any]:
     grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for result in results:
-        key = (result["config"].baseline_name, result["config"].env_id)
+        key = (comparison_label(result["config"]), result["config"].env_id)
         grouped.setdefault(key, []).append(result)
 
     aggregated = {}

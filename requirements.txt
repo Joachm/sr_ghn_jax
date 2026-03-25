@@ -6,3 +6,4 @@ brax
 wandb
 mujoco-playground
 matplotlib
+evosax

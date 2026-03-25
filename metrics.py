@@ -36,6 +36,21 @@ def population_diversity(pop) -> jnp.ndarray:
     return jnp.where(denom > 0, scaled, 0.0)
 
 
+def vector_population_diversity(pop: jnp.ndarray) -> jnp.ndarray:
+    x = jnp.asarray(pop, dtype=jnp.float32)
+    n = x.shape[0]
+    sum_sq = jnp.sum(x * x, axis=1)
+    sum_sq_total = jnp.sum(sum_sq)
+    sum_vec = jnp.sum(x, axis=0)
+    sum_vec_sq = jnp.sum(sum_vec * sum_vec)
+    denom = n * (n - 1)
+    pairwise_sq = 2.0 * (n * sum_sq_total - sum_vec_sq) / jnp.maximum(denom, 1)
+    rms_dist = jnp.sqrt(jnp.maximum(pairwise_sq, 0.0))
+    param_count = jnp.maximum(x.shape[1], 1)
+    scaled = rms_dist / jnp.sqrt(param_count)
+    return jnp.where(denom > 0, scaled, 0.0)
+
+
 def compute_metrics(pop, fitness) -> dict:
     return {
         "fitness_mean": jnp.mean(fitness),
@@ -69,4 +84,32 @@ def compute_experiment_metrics(
     metrics = compute_metrics(pop, fitness)
     metrics.update(_metadata_stats("population", parent_metadata))
     metrics.update(_metadata_stats("elite", elite_metadata))
+    return metrics
+
+
+def zero_mutation_metrics(prefix: str) -> dict:
+    zero = jnp.asarray(0.0, dtype=jnp.float32)
+    return {
+        f"{prefix}_mutation_rate_mean": zero,
+        f"{prefix}_mutation_rate_std": zero,
+        f"{prefix}_mutation_rate_max": zero,
+        f"{prefix}_mutation_block_fraction_mean": zero,
+        f"{prefix}_mutation_blocks_selected_mean": zero,
+        f"{prefix}_mutation_total_blocks_mean": zero,
+        f"{prefix}_update_rms_mean": zero,
+        f"{prefix}_self_distance_rms_mean": zero,
+    }
+
+
+def compute_vector_metrics(pop: jnp.ndarray, fitness: jnp.ndarray) -> dict:
+    metrics = {
+        "fitness_mean": jnp.mean(fitness),
+        "fitness_best": jnp.max(fitness),
+        "fitness_min": jnp.min(fitness),
+        "fitness_std": jnp.std(fitness),
+        "fitness_median": jnp.median(fitness),
+        "diversity": vector_population_diversity(pop),
+    }
+    metrics.update(zero_mutation_metrics("population"))
+    metrics.update(zero_mutation_metrics("elite"))
     return metrics

@@ -6,16 +6,21 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
+from adaptation_analysis import comparison_label
 from configs import (
     BASELINE_FIXED_LR,
     BASELINE_FROZEN_MUTATION,
     BASELINE_FULL,
     BASELINE_NO_SELF_REFERENCE,
+    GYMNAX_SUITE_DEFAULT_EVALS_PER_GENERATION,
+    GYMNAX_SUITE_DEFAULT_NUM_GENERATIONS,
+    GYMNAX_SUITE_DEFAULT_POP_SIZE,
     ShiftWindowConfig,
     make_config_gymnax_generic,
     make_config_nonstationary_brax,
     make_config_nonstationary_gymnax,
 )
+from evosax_adapter import available_evosax_algorithms, fitness_for_evosax, resolve_evosax_strategy
 from envs import (
     active_shift_mask,
     apply_reward_shifts,
@@ -25,10 +30,12 @@ from envs import (
     map_observation_for_shifts,
 )
 from experiments._adaptation import gymnax_suite_shift_windows
-from experiments._common import build_graphs_and_specs
+from experiments._common import build_graphs_and_specs, run_experiment
 from evolution import evo_step, init_population, EvoState
 from obs_norm import init_obs_norm
+from policy_vectors import flatten_policy_params, policy_num_dims, unflatten_policy_vector
 from srghn import mutate_with_metadata
+from specs import policy_spec_for_task
 
 
 class AdaptationTests(unittest.TestCase):
@@ -121,6 +128,51 @@ class AdaptationTests(unittest.TestCase):
         action = map_action_for_shifts(jnp.asarray(1), jnp.asarray(100), config)
         self.assertEqual(int(action), 1)
 
+    def test_evosax_defaults_match_suite_budget(self):
+        srghn_config = make_config_nonstationary_gymnax("CartPole-v1")
+        evosax_config = make_config_nonstationary_gymnax(
+            "CartPole-v1",
+            optimizer_family="evosax",
+            baseline_name="evosax",
+            evosax_algo="cma_es",
+        )
+        self.assertEqual(srghn_config.pop_size, GYMNAX_SUITE_DEFAULT_POP_SIZE)
+        self.assertEqual(srghn_config.num_generations, GYMNAX_SUITE_DEFAULT_NUM_GENERATIONS)
+        self.assertEqual(evosax_config.pop_size, GYMNAX_SUITE_DEFAULT_EVALS_PER_GENERATION)
+        self.assertEqual(evosax_config.num_generations, GYMNAX_SUITE_DEFAULT_NUM_GENERATIONS)
+
+    def test_policy_vector_round_trip(self):
+        try:
+            config = make_config_nonstationary_gymnax("CartPole-v1")
+            policy_spec = policy_spec_for_task(config)
+            params = tuple(
+                jnp.arange(size, dtype=jnp.float32).reshape(shape)
+                for shape, size in zip(policy_spec.shapes, policy_spec.sizes)
+            )
+            vector = flatten_policy_params(params)
+            restored = unflatten_policy_vector(vector, policy_spec)
+            self.assertEqual(vector.shape[0], policy_num_dims(policy_spec))
+            self.assertEqual(len(restored), len(params))
+            for expected, actual in zip(params, restored):
+                self.assertTrue(jnp.array_equal(expected, actual))
+        except ModuleNotFoundError as exc:
+            self.skipTest(str(exc))
+
+    def test_evosax_fitness_sign_conversion(self):
+        raw_fitness = jnp.asarray([1.5, -2.0], dtype=jnp.float32)
+        converted = fitness_for_evosax(raw_fitness)
+        self.assertTrue(jnp.array_equal(converted, jnp.asarray([-1.5, 2.0], dtype=jnp.float32)))
+
+    def test_evosax_strategy_resolution(self):
+        try:
+            available = available_evosax_algorithms()
+            self.assertTrue(len(available) > 0)
+            _ = resolve_evosax_strategy(available[0])
+        except ModuleNotFoundError as exc:
+            self.skipTest(str(exc))
+        with self.assertRaises(ValueError):
+            resolve_evosax_strategy("definitely_not_a_real_strategy")
+
     def test_mutation_metadata_is_finite(self):
         try:
             config = make_config_nonstationary_gymnax("CartPole-v1", pop_size=2, num_generations=2)
@@ -164,6 +216,30 @@ class AdaptationTests(unittest.TestCase):
                 _next_state, metrics = evo_step(state, jnp.asarray(0, dtype=jnp.int32), config)
                 self.assertIn("population_mutation_rate_mean", metrics)
                 self.assertIn("elite_update_rms_mean", metrics)
+        except ModuleNotFoundError as exc:
+            self.skipTest(str(exc))
+
+    def test_short_evosax_cartpole_smoke_run(self):
+        try:
+            available = available_evosax_algorithms()
+            algo = available[0]
+            _ = resolve_evosax_strategy(algo)
+            config = make_config_nonstationary_gymnax(
+                "CartPole-v1",
+                optimizer_family="evosax",
+                baseline_name="evosax",
+                evosax_algo=algo,
+                pop_size=4,
+                num_generations=2,
+                episode_horizon=8,
+                shift_windows=(ShiftWindowConfig(1, None, "cartpole_flip"),),
+            )
+            _state, metrics = run_experiment(config)
+            self.assertIn("fitness_best", metrics)
+            self.assertIn("population_mutation_rate_mean", metrics)
+            self.assertIn("active_shift_windows", metrics)
+            self.assertEqual(comparison_label(config), f"evosax:{algo}")
+            self.assertEqual(metrics["fitness_best"].shape[0], config.num_generations)
         except ModuleNotFoundError as exc:
             self.skipTest(str(exc))
 
