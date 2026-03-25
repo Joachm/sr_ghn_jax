@@ -4,6 +4,8 @@ from dataclasses import is_dataclass, replace
 import importlib
 import inspect
 import math
+import pkgutil
+import re
 
 import jax
 import jax.numpy as jnp
@@ -81,6 +83,11 @@ def _normalize_name(name: str) -> str:
     return "".join(ch for ch in name.lower() if ch.isalnum())
 
 
+def _snake_case_name(name: str) -> str:
+    snake = re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
+    return snake.replace("__", "_")
+
+
 def _instantiate_strategy(strategy_cls, *, pop_size: int, solution: jnp.ndarray):
     constructor_attempts = (
         {"population_size": pop_size, "solution": solution},
@@ -107,15 +114,18 @@ def _strategy_registry():
 
     registry = {}
     modules = [evosax_mod, algorithms_mod]
-    for attr_name in dir(algorithms_mod):
-        attr = getattr(algorithms_mod, attr_name)
-        if inspect.ismodule(attr) and getattr(attr, "__name__", "").startswith("evosax.algorithms"):
-            modules.append(attr)
+    for module_info in pkgutil.walk_packages(algorithms_mod.__path__, algorithms_mod.__name__ + "."):
+        try:
+            modules.append(importlib.import_module(module_info.name))
+        except Exception:
+            continue
 
     for module in modules:
         for attr_name in dir(module):
             attr = getattr(module, attr_name)
             if not inspect.isclass(attr):
+                continue
+            if getattr(attr, "__module__", None) != module.__name__:
                 continue
             has_init = hasattr(attr, "init") or hasattr(attr, "initialize")
             if not (has_init and hasattr(attr, "ask") and hasattr(attr, "tell")):
@@ -123,6 +133,12 @@ def _strategy_registry():
             registry[attr_name] = attr
             registry[attr_name.lower()] = attr
             registry[_normalize_name(attr_name)] = attr
+            registry[_snake_case_name(attr_name)] = attr
+            module_leaf = module.__name__.rsplit(".", 1)[-1]
+            registry[module_leaf] = attr
+            registry[_normalize_name(module_leaf)] = attr
+            if module_leaf == "discovered_es":
+                registry["des"] = attr
     return registry
 
 
