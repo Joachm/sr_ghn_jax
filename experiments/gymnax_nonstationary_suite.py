@@ -27,7 +27,7 @@ def main():
     parser = argparse.ArgumentParser(description="Run the full nonstationary Gymnax SR-GHN suite.")
     parser.add_argument("--seeds", nargs="*", type=int, default=None, help="Explicit seed list; defaults to 0..9.")
     parser.add_argument("--output-dir", default="results/gymnax_nonstationary_suite")
-    parser.add_argument("--project", default="srghn-gymnax4")
+    parser.add_argument("--project", default="srghn-gymnax12")
     parser.add_argument("--fixed-mutation-lr", type=float, default=0.01)
     parser.add_argument("--skip-existing", action="store_true")
     parser.add_argument("--num-generations", type=int, default=1500)
