@@ -58,7 +58,7 @@ def main():
     parser.add_argument("--mutation-block-ratio", type=float, default=1.)
     args = parser.parse_args()
 
-    seeds = args.seeds or list(range(10))
+    seeds = args.seeds or list(range(5))
     output_root = Path(args.output_dir)
     output_root.mkdir(parents=True, exist_ok=True)
 

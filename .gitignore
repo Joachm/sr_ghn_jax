@@ -207,6 +207,8 @@ marimo/_lsp/
 __marimo__/
 
 
+*.png
+control_plots/
 wandb/
 artifacts/
 *.pkl
