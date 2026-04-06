@@ -46,12 +46,12 @@ def main():
     parser.add_argument("--evosax-sigma-init", type=float, default=None)
     parser.add_argument("--fixed-mutation-lr", type=float, default=0.01)
     parser.add_argument("--skip-existing", action="store_true")
-    parser.add_argument("--num-generations", type=int, default=1500)
+    parser.add_argument("--num-generations", type=int, default=6000)
     parser.add_argument("--pop-size", type=int, default=None)
     parser.add_argument("--children-per-parent", type=int, default=4)
     parser.add_argument("--episodes-per-eval", type=int, default=1)
-    parser.add_argument("--episode-horizon", type=int, default=1000)
-    parser.add_argument("--parameter-block-size", type=int, default=1024)
+    parser.add_argument("--episode-horizon", type=int, default=2500)
+    parser.add_argument("--parameter-block-size", type=int, default=1024*4)
     parser.add_argument("--mutation-block-ratio", type=float, default=1.0)
     args = parser.parse_args()
 
@@ -81,7 +81,7 @@ def main():
                 policy_conv_kernel_sizes=POLICY_CONV_KERNEL_SIZES,
                 policy_conv_strides=POLICY_CONV_STRIDES,
                 policy_hidden_dims=POLICY_HIDDEN_DIMS,
-                wandb_project=args.project or ("srghn-minatar" if args.optimizer_family == "srghn" else f"sr-ghn_control_{_safe_name(args.evosax_algo or 'unknown')}_minatar"),
+                wandb_project=args.project or ("srghn-minatar_3" if args.optimizer_family == "srghn" else f"sr-ghn_control_{_safe_name(args.evosax_algo or 'unknown')}_minatar"),
                 wandb_group=_safe_name(env_id),
                 wandb_name=f"{_safe_name(env_id)}-seed{seed}",
                 fixed_mutation_lr=args.fixed_mutation_lr,

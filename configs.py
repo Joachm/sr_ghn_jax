@@ -529,7 +529,7 @@ def make_config_nonstationary_gymnax(
     episode_horizon: int = 500,
     children_per_parent: int = 4,
     episodes_per_eval: int = 1,
-    parameter_block_size: int = 1024,
+    parameter_block_size: int = 1024*4,
     mutation_block_ratio: float = 1.,
     shift_windows: tuple[ShiftWindowConfig, ...] = (ShiftWindowConfig(600, 1200, "cartpole_flip"),),
     optimizer_family: str = "srghn",
