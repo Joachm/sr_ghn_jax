@@ -70,9 +70,16 @@ def main():
             parameter_block_size=args.parameter_block_size,
             mutation_block_ratio=args.mutation_block_ratio,
             optimizer_family=args.optimizer_family,
-            baseline_name=args.baseline,
             evosax_algo=args.evosax_algo,
             evosax_sigma_init=args.evosax_sigma_init,
+        )
+        config = config.__class__(
+            **{
+                **config.__dict__,
+                "wandb_project": args.project,
+                "wandb_group": _safe_name(args.env_id),
+                "wandb_name": f"{_safe_name(args.env_id)}-seed{seed}",
+            }
         )
         suite_dir = output_root / _namespace_for_config(config)
         suite_dir.mkdir(parents=True, exist_ok=True)
