@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from math import prod
 from typing import Tuple
 
@@ -9,18 +10,35 @@ import jax.numpy as jnp
 
 def _infer_obs_dim(env) -> int:
     if hasattr(env, "observation_size"):
-        return int(env.observation_size)
+        return _infer_size(env.observation_size)
     if hasattr(env, "obs_size"):
-        return int(env.obs_size)
+        return _infer_size(env.obs_size)
     obs_space = getattr(env, "observation_space", None)
     if callable(obs_space):
         try:
             obs_space = obs_space()
         except TypeError:
             pass
-    if obs_space is not None and hasattr(obs_space, "shape"):
-        return int(prod(obs_space.shape))
+    if obs_space is not None:
+        return _infer_size(obs_space)
     raise ValueError("Unable to infer observation size from environment.")
+
+
+def _infer_size(value) -> int:
+    if isinstance(value, Mapping):
+        return sum(_infer_size(item) for item in value.values())
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return int(value)
+    shape = getattr(value, "shape", None)
+    if shape is not None:
+        return int(prod(shape))
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        if not value:
+            return 0
+        if all(isinstance(item, (int, float)) and not isinstance(item, bool) for item in value):
+            return int(prod(value))
+        return sum(_infer_size(item) for item in value)
+    raise TypeError(f"Unable to infer size from value of type {type(value)!r}.")
 
 
 def _infer_action_info(env) -> tuple[int, bool, tuple[int, ...], jnp.ndarray | None, jnp.ndarray | None]:

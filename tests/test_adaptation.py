@@ -41,6 +41,7 @@ from obs_norm import init_obs_norm
 from policy import apply_policy
 from policy_vectors import flatten_policy_params, policy_num_dims, unflatten_policy_vector
 from srghn import mutate_with_metadata
+from specs import _infer_obs_dim as infer_specs_obs_dim
 from specs import policy_spec_for_task
 
 
@@ -462,6 +463,26 @@ class AdaptationTests(unittest.TestCase):
             self.assertIn("fitness_best", metrics)
         except ModuleNotFoundError as exc:
             self.skipTest(str(exc))
+
+    def test_dict_based_observation_metadata_is_supported(self):
+        from envs import _infer_obs_dim as infer_env_obs_dim
+
+        class DummyEnv:
+            observation_size = {"proprio": 8, "vision": {"left": 12, "right": 12}}
+            obs_size = {"unused": 999}
+
+        class DummySpace:
+            def __init__(self, shape):
+                self.shape = shape
+
+        class DummySpaceEnv:
+            def observation_space(self):
+                return {"state": DummySpace((5,)), "extra": DummySpace((7,))}
+
+        self.assertEqual(infer_env_obs_dim(DummyEnv()), 32)
+        self.assertEqual(infer_specs_obs_dim(DummyEnv()), 32)
+        self.assertEqual(infer_env_obs_dim(DummySpaceEnv()), 12)
+        self.assertEqual(infer_specs_obs_dim(DummySpaceEnv()), 12)
 
 
 if __name__ == "__main__":
