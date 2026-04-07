@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 
 from envs import apply_reward_shifts, make_env, map_action_for_shifts, map_observation_for_shifts
-from obs_norm import normalize_obs
+from obs_norm import flatten_observation, normalize_obs
 from policy import apply_policy
 from policy_vectors import unflatten_policy_vector
 from srghn import make_policy
@@ -27,7 +27,7 @@ def rollout_episode(
         def step_fn(carry, _):
             obs_t, state_t, done_t, key_t, obs_sum_t, obs_sq_sum_t, obs_count_t = carry
             key_t, key_step = jax.random.split(key_t, 2)
-            obs_flat = jnp.ravel(jnp.asarray(obs_t, dtype=obs_dtype))
+            obs_flat = flatten_observation(obs_t)
             active = jnp.asarray(~done_t, dtype=obs_dtype)
             obs_sum_t = obs_sum_t + active * obs_flat
             obs_sq_sum_t = obs_sq_sum_t + active * jnp.square(obs_flat)
@@ -65,7 +65,7 @@ def rollout_episode(
         def step_fn(carry, _):
             obs_t, state_t, done_t, key_t, obs_sum_t, obs_sq_sum_t, obs_count_t = carry
             key_t, key_step = jax.random.split(key_t, 2)
-            obs_flat = jnp.ravel(jnp.asarray(obs_t, dtype=obs_dtype))
+            obs_flat = flatten_observation(obs_t)
             active = jnp.asarray(~done_t, dtype=obs_dtype)
             obs_sum_t = obs_sum_t + active * obs_flat
             obs_sq_sum_t = obs_sq_sum_t + active * jnp.square(obs_flat)

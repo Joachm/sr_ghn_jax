@@ -5,6 +5,8 @@ from typing import Sequence
 import jax
 import jax.numpy as jnp
 
+from obs_norm import flatten_observation
+
 
 def _dense_forward(params: Sequence[jnp.ndarray], x: jnp.ndarray) -> jnp.ndarray:
     num_layers = len(params) // 2
@@ -18,10 +20,12 @@ def _dense_forward(params: Sequence[jnp.ndarray], x: jnp.ndarray) -> jnp.ndarray
 
 
 def _mlp_forward(params: Sequence[jnp.ndarray], obs: jnp.ndarray) -> jnp.ndarray:
-    return _dense_forward(params, jnp.ravel(obs))
+    return _dense_forward(params, flatten_observation(obs))
 
 
 def _cnn_mlp_forward(params: Sequence[jnp.ndarray], obs: jnp.ndarray, config) -> jnp.ndarray:
+    if not hasattr(obs, "shape"):
+        raise TypeError("cnn_mlp policies require array-like observations, not structured dict observations.")
     x = jnp.asarray(obs, dtype=jnp.float32)
     num_conv_layers = len(getattr(config, "policy_conv_channels", ()))
     for idx in range(num_conv_layers):

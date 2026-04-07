@@ -169,10 +169,13 @@ def active_shift_mask(gen: jnp.ndarray, config, rule: str) -> jnp.ndarray:
 
 
 def map_observation_for_shifts(obs: jnp.ndarray, gen: jnp.ndarray, config) -> jnp.ndarray:
-    out = jnp.asarray(obs)
+    out = obs
     for window in iter_shift_windows(config):
         active = _window_active(gen, window.start_gen, window.end_gen)
         if window.rule == "pendulum_obs_flip":
+            if isinstance(out, dict):
+                raise TypeError("pendulum_obs_flip does not support structured dictionary observations.")
+            out = jnp.asarray(out)
             flipped = out.at[0].set(out[1]).at[1].set(out[0]).at[2].set(-out[2])
             out = jnp.where(active, flipped, out)
     return out

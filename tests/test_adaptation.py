@@ -37,7 +37,7 @@ from experiments._adaptation import (
 )
 from experiments._common import build_graphs_and_specs, default_wandb_project, run_experiment, wandb_config_payload
 from evolution import evo_step, init_population, EvoState
-from obs_norm import init_obs_norm
+from obs_norm import flatten_observation, init_obs_norm, normalize_obs
 from policy import apply_policy
 from policy_vectors import flatten_policy_params, policy_num_dims, unflatten_policy_vector
 from srghn import mutate_with_metadata
@@ -483,6 +483,13 @@ class AdaptationTests(unittest.TestCase):
         self.assertEqual(infer_specs_obs_dim(DummyEnv()), 32)
         self.assertEqual(infer_env_obs_dim(DummySpaceEnv()), 12)
         self.assertEqual(infer_specs_obs_dim(DummySpaceEnv()), 12)
+
+    def test_dict_observations_flatten_for_normalization(self):
+        obs = {"proprio": jnp.asarray([1.0, 2.0], dtype=jnp.float32), "vision": {"left": jnp.asarray([3.0])}}
+        flat = flatten_observation(obs)
+        self.assertEqual(tuple(flat.tolist()), (1.0, 2.0, 3.0))
+        normed = normalize_obs(obs, init_obs_norm(3), clip=5.0, eps=1e-8)
+        self.assertEqual(normed.shape, (3,))
 
 
 if __name__ == "__main__":

@@ -22,6 +22,16 @@ class ObsNormState:
         return cls(mean=mean, var=var, count=count)
 
 
+def flatten_observation(obs) -> jnp.ndarray:
+    leaves, _ = jax.tree_util.tree_flatten(obs)
+    flat_leaves = [jnp.ravel(jnp.asarray(leaf, dtype=jnp.float32)) for leaf in leaves]
+    if not flat_leaves:
+        return jnp.zeros((0,), dtype=jnp.float32)
+    if len(flat_leaves) == 1:
+        return flat_leaves[0]
+    return jnp.concatenate(flat_leaves, axis=0)
+
+
 def init_obs_norm(obs_dim: int, *, dtype=jnp.float32) -> ObsNormState:
     return ObsNormState(
         mean=jnp.zeros((obs_dim,), dtype=dtype),
@@ -31,12 +41,13 @@ def init_obs_norm(obs_dim: int, *, dtype=jnp.float32) -> ObsNormState:
 
 
 def normalize_obs(obs: jnp.ndarray, state: ObsNormState | None, *, clip: float, eps: float) -> jnp.ndarray:
+    flat_obs = flatten_observation(obs)
     if state is None:
-        return obs
-    flat_obs = jnp.ravel(jnp.asarray(obs, dtype=state.mean.dtype))
+        return flat_obs
+    flat_obs = jnp.asarray(flat_obs, dtype=state.mean.dtype)
     normed = (flat_obs - state.mean) / jnp.sqrt(jnp.maximum(state.var, eps))
     normed = jnp.clip(normed, -clip, clip)
-    return normed.reshape(obs.shape)
+    return normed
 
 
 def update_obs_norm(
