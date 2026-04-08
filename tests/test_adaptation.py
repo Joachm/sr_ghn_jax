@@ -491,6 +491,24 @@ class AdaptationTests(unittest.TestCase):
         normed = normalize_obs(obs, init_obs_norm(3), clip=5.0, eps=1e-8)
         self.assertEqual(normed.shape, (3,))
 
+    def test_cnn_observations_can_be_normalized_without_losing_spatial_shape(self):
+        config = self._make_minatar_config()
+        obs = jnp.ones((4, 4, 1), dtype=jnp.float32)
+        state = init_obs_norm(16)
+        normed = normalize_obs(obs, state, clip=5.0, eps=1e-8, preserve_shape=True)
+        self.assertEqual(normed.shape, (4, 4, 1))
+
+        params = (
+            jnp.zeros((3, 3, 1, 16), dtype=jnp.float32),
+            jnp.zeros((16,), dtype=jnp.float32),
+            jnp.zeros((8, 64), dtype=jnp.float32),
+            jnp.zeros((8,), dtype=jnp.float32),
+            jnp.zeros((3, 8), dtype=jnp.float32),
+            jnp.zeros((3,), dtype=jnp.float32),
+        )
+        output = apply_policy(params, normed, config, is_discrete=False)
+        self.assertEqual(output.shape, (3,))
+
 
 if __name__ == "__main__":
     unittest.main()

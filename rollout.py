@@ -19,6 +19,7 @@ def rollout_episode(
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     env, env_params, obs_dim, act_dim, is_discrete, action_shape, action_low, action_high = make_env(config)
     obs_dtype = jnp.float32
+    preserve_obs_shape = getattr(config, "policy_architecture", "mlp") == "cnn_mlp"
 
     if config.env_backend == "gymnax":
         key, key_reset = jax.random.split(key, 2)
@@ -33,7 +34,14 @@ def rollout_episode(
             obs_sq_sum_t = obs_sq_sum_t + active * jnp.square(obs_flat)
             obs_count_t = obs_count_t + active
             obs_shifted = map_observation_for_shifts(obs_t, gen, config)
-            obs_in = normalize_obs(obs_shifted, obs_norm_state, clip=config.obs_norm_clip, eps=config.obs_norm_eps)
+            preserve_shape = preserve_obs_shape and jnp.ndim(obs_shifted) == 3
+            obs_in = normalize_obs(
+                obs_shifted,
+                obs_norm_state,
+                clip=config.obs_norm_clip,
+                eps=config.obs_norm_eps,
+                preserve_shape=preserve_shape,
+            )
             action = apply_policy(policy_params, obs_in, config, is_discrete=is_discrete)
             action = map_action_for_shifts(action, gen, config, act_dim=act_dim, is_discrete=is_discrete)
             if is_discrete:
@@ -71,7 +79,14 @@ def rollout_episode(
             obs_sq_sum_t = obs_sq_sum_t + active * jnp.square(obs_flat)
             obs_count_t = obs_count_t + active
             obs_shifted = map_observation_for_shifts(obs_t, gen, config)
-            obs_in = normalize_obs(obs_shifted, obs_norm_state, clip=config.obs_norm_clip, eps=config.obs_norm_eps)
+            preserve_shape = preserve_obs_shape and jnp.ndim(obs_shifted) == 3
+            obs_in = normalize_obs(
+                obs_shifted,
+                obs_norm_state,
+                clip=config.obs_norm_clip,
+                eps=config.obs_norm_eps,
+                preserve_shape=preserve_shape,
+            )
             action = apply_policy(policy_params, obs_in, config, is_discrete=is_discrete)
             action = map_action_for_shifts(action, gen, config, act_dim=act_dim, is_discrete=is_discrete)
             if is_discrete:

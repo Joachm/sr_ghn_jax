@@ -40,13 +40,24 @@ def init_obs_norm(obs_dim: int, *, dtype=jnp.float32) -> ObsNormState:
     )
 
 
-def normalize_obs(obs: jnp.ndarray, state: ObsNormState | None, *, clip: float, eps: float) -> jnp.ndarray:
+def normalize_obs(
+    obs: jnp.ndarray,
+    state: ObsNormState | None,
+    *,
+    clip: float,
+    eps: float,
+    preserve_shape: bool = False,
+) -> jnp.ndarray:
     flat_obs = flatten_observation(obs)
     if state is None:
+        if preserve_shape:
+            return jnp.asarray(obs, dtype=jnp.float32)
         return flat_obs
     flat_obs = jnp.asarray(flat_obs, dtype=state.mean.dtype)
     normed = (flat_obs - state.mean) / jnp.sqrt(jnp.maximum(state.var, eps))
     normed = jnp.clip(normed, -clip, clip)
+    if preserve_shape:
+        return jnp.reshape(normed, jnp.shape(obs))
     return normed
 
 
