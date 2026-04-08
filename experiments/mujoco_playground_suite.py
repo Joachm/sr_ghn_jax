@@ -44,7 +44,7 @@ def main():
     parser.add_argument("--evosax-sigma-init", type=float, default=None)
     parser.add_argument("--skip-existing", action="store_true")
     parser.add_argument("--pop-size", type=int, default=200)
-    parser.add_argument("--num-generations", type=int, default=20000)
+    parser.add_argument("--num-generations", type=int, default=10000)
     parser.add_argument("--episode-horizon", type=int, default=1000)
     parser.add_argument("--children-per-parent", type=int, default=8)
     parser.add_argument("--episodes-per-eval", type=int, default=2)

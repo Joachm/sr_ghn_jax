@@ -201,7 +201,8 @@ def evo_step(state: EvoState, gen: jnp.int32, config) -> tuple[EvoState, dict]:
         else:
             active = jnp.logical_and(gen >= window.start_gen, gen <= window.end_gen)
         active_windows = active_windows + active.astype(jnp.int32)
-    metrics["active_shift_windows"] = active_windows.astype(jnp.float32)
+    #metrics["active_shift_windows"] = active_windows.astype(jnp.float32)
+    metrics["active_shift_windows"] = jnp.asarray(active_windows, dtype=jnp.float32)
     jax.debug.callback(_wandb_log, metrics, gen)
     updated_obs_norm = update_obs_norm(
         state.obs_norm,
