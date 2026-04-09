@@ -275,7 +275,7 @@ def make_config_mujoco_playground_generic(
     env_id: str,
     *,
     seed: int = 1,
-    pop_size: int = 200,
+    pop_size: int = 500,
     num_generations: int = 10000,
     episode_horizon: int = 1000,
     children_per_parent: int = 8,
@@ -286,7 +286,7 @@ def make_config_mujoco_playground_generic(
     optimizer_family: str = "srghn",
     evosax_algo: str | None = None,
     evosax_sigma_init: float | None = None,
-    policy_hidden_dims: tuple[int, ...] = (128, 64, 64),
+    policy_hidden_dims: tuple[int, ...] = (512, 256, 128),
 ) -> ExperimentConfig:
     return ExperimentConfig(
         task_name="mujoco_playground_generic",

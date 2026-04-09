@@ -63,8 +63,8 @@ def gymnax_suite_shift_windows(env_id: str) -> tuple[ShiftWindowConfig, ...]:
 def gymnax_minatar_suite_shift_windows(env_id: str) -> tuple[ShiftWindowConfig, ...]:
     if env_id in GYMNAX_MINATAR_SUITE_ENVIRONMENTS:
         return (
-            ShiftWindowConfig(3200, 5600, "discrete_reverse"),
-            ShiftWindowConfig(7200, 11200, "discrete_reverse"),
+            ShiftWindowConfig(3200*2, 2*5600, "discrete_reverse"),
+            ShiftWindowConfig(2*7200, 2*11200, "discrete_reverse"),
         )
     raise ValueError(f"Unsupported Gymnax MinAtar suite env: {env_id}")
 
