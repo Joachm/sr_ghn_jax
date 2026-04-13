@@ -211,6 +211,11 @@ class MetaSineConfig:
     vector_ga_sigma: float = 0.05
     vector_ga_init_scale: float = 0.1
 
+    wandb_project: str | None = "meta_sine_srghn"
+    wandb_group: str | None = None
+    wandb_name: str | None = None
+    wandb_log_plots: bool = False
+
     outer_evosax_sigma_init: float | None = 0.05
     inner_evosax_sigma_init: float | None = 0.05
 
@@ -222,6 +227,149 @@ class MetaSineConfig:
 
 def _sizes_from_shapes(shapes: tuple[tuple[int, ...], ...]) -> tuple[int, ...]:
     return tuple(int(prod(shape)) for shape in shapes)
+
+
+def _safe_wandb_import():
+    try:
+        import wandb
+    except Exception:
+        return None
+    return wandb
+
+
+def wandb_config_payload(
+    cfg: MetaSineConfig,
+    cond: ConditionSpec,
+    *,
+    policy_spec: ParamNodeSpec | None = None,
+    self_spec: ParamNodeSpec | None = None,
+) -> dict[str, Any]:
+    payload = asdict(cfg)
+    payload["condition"] = asdict(cond)
+    if policy_spec is not None:
+        payload["policy_spec_shapes"] = [tuple(shape) for shape in policy_spec.shapes]
+        payload["policy_num_dims"] = int(policy_num_dims(policy_spec))
+    if self_spec is not None:
+        payload["self_spec_shapes"] = [tuple(shape) for shape in self_spec.shapes]
+        payload["self_num_nodes"] = int(self_spec.num_nodes)
+    return payload
+
+
+def _wandb_run_name(cfg: MetaSineConfig, cond: ConditionSpec) -> str:
+    prefix = cfg.wandb_name or "meta_sine_srghn"
+    return f"{prefix}-{cond.name}"
+
+
+def _wandb_init_run(
+    cfg: MetaSineConfig,
+    cond: ConditionSpec,
+    *,
+    policy_spec: ParamNodeSpec | None = None,
+    self_spec: ParamNodeSpec | None = None,
+):
+    if cfg.wandb_project is None:
+        return None
+    wandb = _safe_wandb_import()
+    if wandb is None:
+        return None
+    try:
+        if wandb.run is None:
+            return wandb.init(
+                project=cfg.wandb_project,
+                group=cfg.wandb_group,
+                name=_wandb_run_name(cfg, cond),
+                config=wandb_config_payload(cfg, cond, policy_spec=policy_spec, self_spec=self_spec),
+            )
+    except Exception:
+        return None
+    return wandb.run
+
+
+def _wandb_log_metrics(metrics: dict[str, Any], step: int, *, prefix: str = "train") -> None:
+    wandb = _safe_wandb_import()
+    if wandb is None or wandb.run is None:
+        return
+    payload = {f"{prefix}/{key}": float(value) for key, value in metrics.items()}
+    payload["gen"] = int(step)
+    try:
+        wandb.log(payload, step=int(step))
+    except Exception:
+        pass
+
+
+def _wandb_log_summary(
+    cfg: MetaSineConfig,
+    cond: ConditionSpec,
+    payload: dict[str, Any],
+) -> None:
+    wandb = _safe_wandb_import()
+    if wandb is None or wandb.run is None:
+        return
+
+    history = payload["train_history"]
+    curve = payload["adaptation_curve_query_mse"]
+    final_population_fitness = jnp.asarray(payload["final_population_fitness"])
+    summary_payload = {
+        "final/train_fitness_best": float(history["fitness_best"][-1]),
+        "final/train_fitness_mean": float(history["fitness_mean"][-1]),
+        "final/train_query_mse_best": float(history["query_mse_best"][-1]),
+        "final/train_query_mse_mean": float(history["query_mse_mean"][-1]),
+        "final/train_diversity": float(history["diversity"][-1]),
+        "final/final_population_fitness_best": float(jnp.max(final_population_fitness)),
+        "final/final_population_fitness_mean": float(jnp.mean(final_population_fitness)),
+        "final/heldout_curve_pre_mse_mean": float(curve["mean"][0]),
+        "final/heldout_curve_post_mse_mean": float(curve["mean"][-1]),
+        "final/heldout_curve_stderr_post_mse": float(curve["stderr"][-1]),
+        "final/heldout_curve_improvement_mean": float(curve["mean"][0] - curve["mean"][-1]),
+        "final/heldout_curve_length": int(len(curve["mean"])),
+    }
+    try:
+        wandb.log(summary_payload, step=int(cfg.outer_generations))
+    except Exception:
+        pass
+
+    if not cfg.wandb_log_plots:
+        return
+
+    try:
+        import matplotlib.pyplot as plt
+    except Exception:
+        return
+
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+    axes[0].plot(history["query_mse_best"], label="best")
+    axes[0].plot(history["query_mse_mean"], label="mean")
+    axes[0].set_title("Outer meta-train")
+    axes[0].set_xlabel("Outer generation")
+    axes[0].set_ylabel("Query MSE")
+    axes[0].legend()
+
+    xs = list(range(len(curve["mean"])))
+    axes[1].plot(xs, curve["mean"], label="mean")
+    axes[1].fill_between(xs, curve["mean"] - curve["stderr"], curve["mean"] + curve["stderr"], alpha=0.2)
+    axes[1].set_title("Held-out adaptation")
+    axes[1].set_xlabel("Inner generation")
+    axes[1].set_ylabel("Query MSE")
+    axes[1].legend()
+    fig.suptitle(cond.name)
+    fig.tight_layout()
+
+    try:
+        wandb.log({"plots/summary": wandb.Image(fig)}, step=int(cfg.outer_generations))
+    except Exception:
+        pass
+    finally:
+        plt.close(fig)
+
+
+def _wandb_finish_run() -> None:
+    wandb = _safe_wandb_import()
+    if wandb is None or wandb.run is None:
+        return
+    try:
+        wandb.finish()
+    except Exception:
+        pass
 
 
 
@@ -444,6 +592,45 @@ def init_srghn_population(
 ) -> SRGHN:
     keys = jax.random.split(key, pop_size)
     return eqx.filter_vmap(lambda k: init_srghn_individual(k, cfg, graphs, specs))(keys)
+
+
+@partial(jax.jit, static_argnums=(0, 1))
+def run_srghn_compiled(cfg: MetaSineConfig, cond: ConditionSpec, key: jax.Array):
+    graphs, specs = build_srghn_graphs_and_specs(cfg)
+    self_graph, policy_graph = graphs
+    self_spec, policy_spec = specs
+
+    key_pop, key_loop = jax.random.split(key)
+    init_pop = init_srghn_population(
+        key_pop,
+        cfg.outer_pop_size,
+        cfg,
+        (self_graph, policy_graph),
+        (self_spec, policy_spec),
+    )
+    init_best = _select_srghn(init_pop, 0)
+    init_state = SRGHNMetaState(
+        pop=init_pop,
+        key=key_loop,
+        pop_fitness=-jnp.inf * jnp.ones((cfg.outer_pop_size,), dtype=jnp.float32),
+        best_fitness=jnp.asarray(-jnp.inf, dtype=jnp.float32),
+        best_indiv=init_best,
+    )
+
+    gens = jnp.arange(cfg.outer_generations, dtype=jnp.int32)
+    final_state, history = jax.lax.scan(
+        lambda carry, gen: srghn_outer_step(carry, gen, cfg, cond),
+        init_state,
+        gens,
+    )
+
+    heldout_tasks = sample_sine_tasks(jax.random.PRNGKey(cfg.seed + 10_000), cfg, cfg.test_task_batch_size)
+    heldout_keys = jax.random.split(jax.random.PRNGKey(cfg.seed + 20_000), cfg.test_task_batch_size)
+
+    curves = jax.vmap(
+        lambda sx, sy, qx, qy, task_key: srghn_task_curve(final_state.best_indiv, task_key, sx, sy, qx, qy, cfg, cond)
+    )(heldout_tasks.support_x, heldout_tasks.support_y, heldout_tasks.query_x, heldout_tasks.query_y, heldout_keys)
+    return final_state, history, curves
 
 
 # --------------------------------------------------------------------------------------
@@ -1149,7 +1336,7 @@ def vector_task_curve(
 
 
 
-def srghn_outer_step(state: SRGHNMetaState, cfg: MetaSineConfig, cond: ConditionSpec):
+def srghn_outer_step(state: SRGHNMetaState, gen: jnp.ndarray, cfg: MetaSineConfig, cond: ConditionSpec):
     key_next, key_tasks, key_eval, key_evolve = jax.random.split(state.key, 4)
     tasks = sample_sine_tasks(key_tasks, cfg, cfg.meta_batch_size)
     eval_keys = jax.random.split(key_eval, cfg.outer_pop_size * (1 + cfg.outer_children_per_parent))
@@ -1193,6 +1380,7 @@ def srghn_outer_step(state: SRGHNMetaState, cfg: MetaSineConfig, cond: Condition
     metrics = compute_experiment_metrics(state.pop, all_fitness, parent_metadata, elite_metadata)
     metrics["query_mse_best"] = -metrics["fitness_best"]
     metrics["query_mse_mean"] = -metrics["fitness_mean"]
+    jax.debug.callback(partial(_wandb_log_metrics, prefix="train"), metrics, gen)
 
     gen_best_idx = jnp.argmax(next_fitness)
     gen_best = _select_srghn(next_pop, gen_best_idx)
@@ -1211,7 +1399,7 @@ def srghn_outer_step(state: SRGHNMetaState, cfg: MetaSineConfig, cond: Condition
 
 
 
-def vector_gaussian_outer_step(state: VectorGAMetaState, cfg: MetaSineConfig, cond: ConditionSpec, policy_spec: ParamNodeSpec, inner_adapter: EvosaxStrategyAdapter | None):
+def vector_gaussian_outer_step(state: VectorGAMetaState, gen: jnp.ndarray, cfg: MetaSineConfig, cond: ConditionSpec, policy_spec: ParamNodeSpec, inner_adapter: EvosaxStrategyAdapter | None):
     key_next, key_tasks, key_eval, key_children = jax.random.split(state.key, 4)
     tasks = sample_sine_tasks(key_tasks, cfg, cfg.meta_batch_size)
 
@@ -1237,6 +1425,7 @@ def vector_gaussian_outer_step(state: VectorGAMetaState, cfg: MetaSineConfig, co
     metrics = compute_vector_metrics(state.pop, all_fitness)
     metrics["query_mse_best"] = -metrics["fitness_best"]
     metrics["query_mse_mean"] = -metrics["fitness_mean"]
+    jax.debug.callback(partial(_wandb_log_metrics, prefix="train"), metrics, gen)
 
     gen_best_idx = jnp.argmax(next_fitness)
     gen_best_solution = next_pop[gen_best_idx]
@@ -1288,7 +1477,7 @@ def init_outer_evosax_state(key: jax.Array, cfg: MetaSineConfig, adapter: Evosax
 
 
 
-def vector_evosax_outer_step(state: VectorEvosaxMetaState, cfg: MetaSineConfig, cond: ConditionSpec, policy_spec: ParamNodeSpec, inner_adapter: EvosaxStrategyAdapter | None, outer_adapter: EvosaxStrategyAdapter):
+def vector_evosax_outer_step(state: VectorEvosaxMetaState, gen: jnp.ndarray, cfg: MetaSineConfig, cond: ConditionSpec, policy_spec: ParamNodeSpec, inner_adapter: EvosaxStrategyAdapter | None, outer_adapter: EvosaxStrategyAdapter):
     key_tasks, key_ask, key_eval, key_tell, key_next = jax.random.split(state.key, 5)
     tasks = sample_sine_tasks(key_tasks, cfg, cfg.meta_batch_size)
 
@@ -1304,6 +1493,7 @@ def vector_evosax_outer_step(state: VectorEvosaxMetaState, cfg: MetaSineConfig, 
     metrics = compute_vector_metrics(population, fitness)
     metrics["query_mse_best"] = -metrics["fitness_best"]
     metrics["query_mse_mean"] = -metrics["fitness_mean"]
+    jax.debug.callback(partial(_wandb_log_metrics, prefix="train"), metrics, gen)
 
     gen_best_idx = jnp.argmax(fitness)
     gen_best_solution = population[gen_best_idx]
@@ -1329,52 +1519,26 @@ def vector_evosax_outer_step(state: VectorEvosaxMetaState, cfg: MetaSineConfig, 
 
 
 def run_srghn_condition(cfg: MetaSineConfig, cond: ConditionSpec) -> dict[str, Any]:
-    graphs, specs = build_srghn_graphs_and_specs(cfg)
-    self_graph, policy_graph = graphs
-    self_spec, policy_spec = specs
+    policy_spec = regression_policy_spec(cfg.policy_hidden_dims)
+    self_spec = _srghn_self_spec(policy_spec, cfg)
+
+    _wandb_init_run(cfg, cond, policy_spec=policy_spec, self_spec=self_spec)
 
     init_key = jax.random.PRNGKey(cfg.seed)
-    @jax.jit
-    def run_impl(key: jax.Array):
-        key_pop, key_loop = jax.random.split(key)
-        init_pop = init_srghn_population(
-            key_pop,
-            cfg.outer_pop_size,
-            cfg,
-            (self_graph, policy_graph),
-            (self_spec, policy_spec),
-        )
-        init_best = _select_srghn(init_pop, 0)
-        init_state = SRGHNMetaState(
-            pop=init_pop,
-            key=key_loop,
-            pop_fitness=-jnp.inf * jnp.ones((cfg.outer_pop_size,), dtype=jnp.float32),
-            best_fitness=jnp.asarray(-jnp.inf, dtype=jnp.float32),
-            best_indiv=init_best,
-        )
-
-        final_state, history = jax.lax.scan(
-            lambda carry, _: srghn_outer_step(carry, cfg, cond),
-            init_state,
-            None,
-            length=cfg.outer_generations,
-        )
-
-        heldout_tasks = sample_sine_tasks(jax.random.PRNGKey(cfg.seed + 10_000), cfg, cfg.test_task_batch_size)
-        heldout_keys = jax.random.split(jax.random.PRNGKey(cfg.seed + 20_000), cfg.test_task_batch_size)
-
-        curves = jax.vmap(
-            lambda sx, sy, qx, qy, task_key: srghn_task_curve(final_state.best_indiv, task_key, sx, sy, qx, qy, cfg, cond)
-        )(heldout_tasks.support_x, heldout_tasks.support_y, heldout_tasks.query_x, heldout_tasks.query_y, heldout_keys)
-        return final_state, history, curves
-
     t0 = time.perf_counter()
-    final_state, history, curves = run_impl(init_key)
+    final_state, history, curves = run_srghn_compiled(cfg, cond, init_key)
     jax.block_until_ready(history["fitness_best"])
     jax.block_until_ready(curves)
     train_seconds = time.perf_counter() - t0
     champion = final_state.best_indiv
     eval_seconds = 0.0
+    summary_payload = {
+        "train_history": _history_to_host(history),
+        "adaptation_curve_query_mse": _summary_from_curves(curves),
+        "final_population_fitness": jax.device_get(final_state.pop_fitness),
+    }
+    _wandb_log_summary(cfg, cond, summary_payload)
+    _wandb_finish_run()
 
     return {
         "kind": "srghn",
@@ -1401,6 +1565,8 @@ def run_vector_condition(cfg: MetaSineConfig, cond: ConditionSpec) -> dict[str, 
     if cond.outer_optimizer == "evosax":
         outer_adapter = make_evosax_adapter(cfg.outer_pop_size, cond.outer_evosax_algo or "", cfg.outer_evosax_sigma_init, num_dims)
 
+    _wandb_init_run(cfg, cond, policy_spec=policy_spec)
+
     init_key = jax.random.PRNGKey(cfg.seed)
     key_pop, key_loop = jax.random.split(init_key)
 
@@ -1416,11 +1582,11 @@ def run_vector_condition(cfg: MetaSineConfig, cond: ConditionSpec) -> dict[str, 
 
         @jax.jit
         def run_impl(state: VectorGAMetaState):
+            gens = jnp.arange(cfg.outer_generations, dtype=jnp.int32)
             return jax.lax.scan(
-                lambda carry, _: vector_gaussian_outer_step(carry, cfg, cond, policy_spec, inner_adapter),
+                lambda carry, gen: vector_gaussian_outer_step(carry, gen, cfg, cond, policy_spec, inner_adapter),
                 state,
-                None,
-                length=cfg.outer_generations,
+                gens,
             )
 
     elif cond.outer_optimizer == "evosax":
@@ -1430,11 +1596,11 @@ def run_vector_condition(cfg: MetaSineConfig, cond: ConditionSpec) -> dict[str, 
 
         @jax.jit
         def run_impl(state: VectorEvosaxMetaState):
+            gens = jnp.arange(cfg.outer_generations, dtype=jnp.int32)
             return jax.lax.scan(
-                lambda carry, _: vector_evosax_outer_step(carry, cfg, cond, policy_spec, inner_adapter, outer_adapter),
+                lambda carry, gen: vector_evosax_outer_step(carry, gen, cfg, cond, policy_spec, inner_adapter, outer_adapter),
                 state,
-                None,
-                length=cfg.outer_generations,
+                gens,
             )
     else:
         raise ValueError(f"Unsupported vector outer optimizer: {cond.outer_optimizer}")
@@ -1445,7 +1611,7 @@ def run_vector_condition(cfg: MetaSineConfig, cond: ConditionSpec) -> dict[str, 
     train_seconds = time.perf_counter() - t0
 
     champion = final_state.best_solution
-    final_fitness = final_state.fitness
+    final_fitness = final_state.pop_fitness
     heldout_tasks = sample_sine_tasks(jax.random.PRNGKey(cfg.seed + 10_000), cfg, cfg.test_task_batch_size)
     heldout_keys = jax.random.split(jax.random.PRNGKey(cfg.seed + 20_000), cfg.test_task_batch_size)
 
@@ -1470,6 +1636,13 @@ def run_vector_condition(cfg: MetaSineConfig, cond: ConditionSpec) -> dict[str, 
     curves = eval_curves(champion, heldout_tasks, heldout_keys)
     jax.block_until_ready(curves)
     eval_seconds = time.perf_counter() - t1
+    summary_payload = {
+        "train_history": _history_to_host(history),
+        "adaptation_curve_query_mse": _summary_from_curves(curves),
+        "final_population_fitness": jax.device_get(final_fitness),
+    }
+    _wandb_log_summary(cfg, cond, summary_payload)
+    _wandb_finish_run()
 
     return {
         "kind": "vector",
@@ -1576,6 +1749,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vector-ga-init-scale", type=float, default=0.1)
     parser.add_argument("--outer-evosax-sigma-init", type=float, default=0.05)
     parser.add_argument("--inner-evosax-sigma-init", type=float, default=0.05)
+    parser.add_argument("--no-wandb", action="store_true")
+    parser.add_argument("--wandb-project", default="meta_sine_srghn")
+    parser.add_argument("--wandb-group", default=None)
+    parser.add_argument("--wandb-name", default=None)
+    parser.add_argument("--wandb-log-plots", action="store_true")
     return parser.parse_args()
 
 
@@ -1607,6 +1785,10 @@ def make_base_cfg(args: argparse.Namespace) -> MetaSineConfig:
         vector_ga_init_scale=args.vector_ga_init_scale,
         outer_evosax_sigma_init=args.outer_evosax_sigma_init,
         inner_evosax_sigma_init=args.inner_evosax_sigma_init,
+        wandb_project=None if args.no_wandb else args.wandb_project,
+        wandb_group=args.wandb_group,
+        wandb_name=args.wandb_name,
+        wandb_log_plots=args.wandb_log_plots,
     )
     if args.fast:
         cfg = replace(
