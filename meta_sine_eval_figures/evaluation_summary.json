@@ -1,0 +1,74 @@
+{
+  "srghn_self_self": {
+    "condition_name": "srghn_self_self",
+    "search_object": "srghn",
+    "outer_optimizer": "srghn_self",
+    "inner_optimizer": "srghn_self",
+    "outer_evosax_algo": null,
+    "inner_evosax_algo": null,
+    "pre_mse_mean": 3.454096794128418,
+    "post_mse_mean": 2.5121724605560303,
+    "abs_improvement_mean": 0.9419242143630981,
+    "rel_improvement_mean": 0.20615047216415405
+  },
+  "sep_cma_es_sep_cma_es": {
+    "condition_name": "sep_cma_es_sep_cma_es",
+    "search_object": "vector",
+    "outer_optimizer": "evosax",
+    "inner_optimizer": "evosax",
+    "outer_evosax_algo": "Sep_CMA_ES",
+    "inner_evosax_algo": "Sep_CMA_ES",
+    "pre_mse_mean": 3.01231050491333,
+    "post_mse_mean": 2.683354377746582,
+    "abs_improvement_mean": 0.32895606756210327,
+    "rel_improvement_mean": 0.10860644280910492
+  },
+  "open_es_open_es": {
+    "condition_name": "open_es_open_es",
+    "search_object": "vector",
+    "outer_optimizer": "evosax",
+    "inner_optimizer": "evosax",
+    "outer_evosax_algo": "Open_ES",
+    "inner_evosax_algo": "Open_ES",
+    "pre_mse_mean": 5.69807243347168,
+    "post_mse_mean": 11.030324935913086,
+    "abs_improvement_mean": -5.33225154876709,
+    "rel_improvement_mean": -1.3808385133743286
+  },
+  "simple_ga_simple_ga": {
+    "condition_name": "simple_ga_simple_ga",
+    "search_object": "vector",
+    "outer_optimizer": "evosax",
+    "inner_optimizer": "evosax",
+    "outer_evosax_algo": "SimpleGA",
+    "inner_evosax_algo": "SimpleGA",
+    "pre_mse_mean": 35.46158981323242,
+    "post_mse_mean": 36.40228271484375,
+    "abs_improvement_mean": -0.9406938552856445,
+    "rel_improvement_mean": -0.36212003231048584
+  },
+  "samr_ga_samr_ga": {
+    "condition_name": "samr_ga_samr_ga",
+    "search_object": "vector",
+    "outer_optimizer": "evosax",
+    "inner_optimizer": "evosax",
+    "outer_evosax_algo": "SAMR_GA",
+    "inner_evosax_algo": "SAMR_GA",
+    "pre_mse_mean": 3.3570690155029297,
+    "post_mse_mean": 3.3919894695281982,
+    "abs_improvement_mean": -0.034920573234558105,
+    "rel_improvement_mean": -0.03696044906973839
+  },
+  "gesmr_ga_gesmr_ga": {
+    "condition_name": "gesmr_ga_gesmr_ga",
+    "search_object": "vector",
+    "outer_optimizer": "evosax",
+    "inner_optimizer": "evosax",
+    "outer_evosax_algo": "GESMR_GA",
+    "inner_evosax_algo": "GESMR_GA",
+    "pre_mse_mean": 4.557409286499023,
+    "post_mse_mean": 4.495351791381836,
+    "abs_improvement_mean": 0.06205770745873451,
+    "rel_improvement_mean": -0.03946360945701599
+  }
+}
