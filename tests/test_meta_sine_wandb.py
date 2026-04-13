@@ -141,6 +141,19 @@ class MetaSineWandbTests(unittest.TestCase):
         self.assertEqual(self.fake_wandb.module.log_calls, [])
         self.assertEqual(self.fake_wandb.module.finish_calls, 0)
 
+    def test_extra_evosax_preset_names_are_available(self):
+        for name, expected_algo in (
+            ("simple_ga_simple_ga", "SimpleGA"),
+            ("samr_ga_samr_ga", "SAMR_GA"),
+            ("gesmr_ga_gesmr_ga", "GESMR_GA"),
+        ):
+            cond = ms.validate_condition(ms.PRESET_CONDITIONS[name])
+            self.assertEqual(cond.search_object, "vector")
+            self.assertEqual(cond.outer_optimizer, "evosax")
+            self.assertEqual(cond.inner_optimizer, "evosax")
+            self.assertEqual(cond.outer_evosax_algo, expected_algo)
+            self.assertEqual(cond.inner_evosax_algo, expected_algo)
+
 
 if __name__ == "__main__":
     unittest.main()

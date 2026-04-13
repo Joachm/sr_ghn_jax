@@ -820,6 +820,22 @@ PRESET_CONDITIONS: dict[str, ConditionSpec] = {
         outer_evosax_algo="SimpleGA",
         inner_evosax_algo="SimpleGA",
     ),
+    "samr_ga_samr_ga": ConditionSpec(
+        name="samr_ga_samr_ga",
+        search_object="vector",
+        outer_optimizer="evosax",
+        inner_optimizer="evosax",
+        outer_evosax_algo="SAMR_GA",
+        inner_evosax_algo="SAMR_GA",
+    ),
+    "gesmr_ga_gesmr_ga": ConditionSpec(
+        name="gesmr_ga_gesmr_ga",
+        search_object="vector",
+        outer_optimizer="evosax",
+        inner_optimizer="evosax",
+        outer_evosax_algo="GESMR_GA",
+        inner_evosax_algo="GESMR_GA",
+    ),
     "pgpe_pgpe": ConditionSpec(
         name="pgpe_pgpe",
         search_object="vector",
@@ -1611,7 +1627,7 @@ def run_vector_condition(cfg: MetaSineConfig, cond: ConditionSpec) -> dict[str, 
     train_seconds = time.perf_counter() - t0
 
     champion = final_state.best_solution
-    final_fitness = final_state.pop_fitness
+    final_fitness = final_state.fitness
     heldout_tasks = sample_sine_tasks(jax.random.PRNGKey(cfg.seed + 10_000), cfg, cfg.test_task_batch_size)
     heldout_keys = jax.random.split(jax.random.PRNGKey(cfg.seed + 20_000), cfg.test_task_batch_size)
 
