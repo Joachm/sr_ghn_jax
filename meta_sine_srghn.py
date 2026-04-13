@@ -33,7 +33,7 @@ from gnn import GraphEncoder
 from graphs import make_chain_graph, make_policy_hierarchical_graph, make_self_hierarchical_graph
 from hypernets import DeterministicHead, StochasticHyper
 from metrics import compute_experiment_metrics, compute_vector_metrics, zero_mutation_metrics
-from specs import ParamNodeSpec, _policy_metadata, srghn_self_spec
+from specs import ParamNodeSpec, _policy_metadata, srghn_self_spec_from_layout
 from srghn import SRGHN, make_policy, mutate_with_metadata, mutation_metadata
 from experiments.evosax_adapter import EvosaxStrategyAdapter, fitness_for_evosax
 from experiments.policy_vectors import (
@@ -249,17 +249,87 @@ def regression_policy_spec(hidden_dims: tuple[int, ...]) -> ParamNodeSpec:
 
 
 
-def _empty_self_spec() -> ParamNodeSpec:
-    return ParamNodeSpec((), (), 0, 0, (), (), (), (), None)
+def _srghn_self_layout(
+    policy_spec: ParamNodeSpec,
+    cfg: MetaSineConfig,
+) -> tuple[tuple[tuple[str, ...], tuple[int, ...]], ...]:
+    if cfg.embedding_dim != cfg.gnn_hidden_dim:
+        raise ValueError("cfg.embedding_dim must equal cfg.gnn_hidden_dim.")
+
+    feat_dim = len(policy_spec.node_features[0])
+    hidden_dim = cfg.gnn_hidden_dim
+    coeff_dim = cfg.stoch_coeff_dim
+    block_size = cfg.parameter_block_size
+    mutation_rate_head_dim = cfg.mutation_rate_head_dim
+
+    leaf_entries: list[tuple[tuple[str, ...], tuple[int, ...]]] = [
+        (("self_context_emb",), (cfg.embedding_dim,)),
+        (("policy_node_emb",), (policy_spec.num_nodes, cfg.embedding_dim)),
+        (("self_feat_proj", "weight"), (hidden_dim, feat_dim)),
+        (("self_feat_proj", "bias"), (hidden_dim,)),
+        (("policy_feat_proj", "weight"), (hidden_dim, feat_dim)),
+        (("policy_feat_proj", "bias"), (hidden_dim,)),
+        (("encoder_self", "msg", "weight"), (hidden_dim, hidden_dim)),
+        (("encoder_self", "msg", "bias"), (hidden_dim,)),
+        (("encoder_self", "gru", "weight_ih"), (3 * hidden_dim, hidden_dim)),
+        (("encoder_self", "gru", "weight_hh"), (3 * hidden_dim, hidden_dim)),
+        (("encoder_self", "gru", "bias"), (3 * hidden_dim,)),
+        (("encoder_self", "gru", "bias_n"), (hidden_dim,)),
+        (("encoder_self", "rel_emb"), (8, hidden_dim)),
+        (("encoder_policy", "msg", "weight"), (hidden_dim, hidden_dim)),
+        (("encoder_policy", "msg", "bias"), (hidden_dim,)),
+        (("encoder_policy", "gru", "weight_ih"), (3 * hidden_dim, hidden_dim)),
+        (("encoder_policy", "gru", "weight_hh"), (3 * hidden_dim, hidden_dim)),
+        (("encoder_policy", "gru", "bias"), (3 * hidden_dim,)),
+        (("encoder_policy", "gru", "bias_n"), (hidden_dim,)),
+        (("encoder_policy", "rel_emb"), (8, hidden_dim)),
+        (("stoch", "trunk", "lin1", "weight"), (hidden_dim, hidden_dim)),
+        (("stoch", "trunk", "lin2", "weight"), (hidden_dim, hidden_dim)),
+        (("stoch", "global_proj", "weight"), (hidden_dim, hidden_dim)),
+        (("stoch", "global_proj", "bias"), (hidden_dim,)),
+        (("stoch", "child_mu_head", "weight"), (hidden_dim, hidden_dim)),
+        (("stoch", "child_mu_head", "bias"), (hidden_dim,)),
+        (("stoch", "child_logstd_head", "weight"), (hidden_dim, hidden_dim)),
+        (("stoch", "child_logstd_head", "bias"), (hidden_dim,)),
+        (("stoch", "pos_proj", "weight"), (hidden_dim, 6)),
+        (("stoch", "pos_proj", "bias"), (hidden_dim,)),
+        (("stoch", "block_proj", "weight"), (hidden_dim, hidden_dim)),
+        (("stoch", "block_proj", "bias"), (hidden_dim,)),
+        (("stoch", "score_head", "weight"), (1, hidden_dim)),
+        (("stoch", "score_head", "bias"), (1,)),
+        (("stoch", "std_head", "weight"), (coeff_dim, hidden_dim)),
+        (("stoch", "lr_head", "weight"), (mutation_rate_head_dim, hidden_dim)),
+        (("stoch", "lr_head", "bias"), (mutation_rate_head_dim,)),
+        (("stoch", "basis"), (coeff_dim, block_size)),
+        (("det", "context_proj", "weight"), (hidden_dim, hidden_dim)),
+        (("det", "context_proj", "bias"), (hidden_dim,)),
+        (("det", "pos_proj", "weight"), (hidden_dim, 6)),
+        (("det", "pos_proj", "bias"), (hidden_dim,)),
+        (("det", "block_proj", "weight"), (hidden_dim, hidden_dim)),
+        (("det", "block_proj", "bias"), (hidden_dim,)),
+        (("det", "out_proj", "weight"), (block_size, hidden_dim)),
+        (("det", "out_proj", "bias"), (block_size,)),
+    ]
+
+    num_self_nodes = 1 + len(leaf_entries)
+    return (
+        (("self_node_emb",), (num_self_nodes, cfg.embedding_dim)),
+        *leaf_entries,
+    )
 
 
+def _srghn_self_spec(policy_spec: ParamNodeSpec, cfg: MetaSineConfig) -> ParamNodeSpec:
+    return srghn_self_spec_from_layout(_srghn_self_layout(policy_spec, cfg))
 
-def build_template_srghn(
-    num_self_nodes: int,
+
+def build_srghn_module(
+    self_spec: ParamNodeSpec,
     policy_spec: ParamNodeSpec,
     cfg: MetaSineConfig,
     *,
     key: jax.Array,
+    self_graph: Any | None = None,
+    policy_graph: Any | None = None,
 ) -> SRGHN:
     if cfg.embedding_dim != cfg.gnn_hidden_dim:
         raise ValueError("cfg.embedding_dim must equal cfg.gnn_hidden_dim.")
@@ -276,7 +346,7 @@ def build_template_srghn(
         k_det,
     ) = jax.random.split(key, 9)
 
-    self_node_emb = 0.1 * jax.random.normal(k_self_emb, (num_self_nodes, cfg.embedding_dim), dtype=jnp.float32)
+    self_node_emb = 0.1 * jax.random.normal(k_self_emb, (self_spec.num_nodes, cfg.embedding_dim), dtype=jnp.float32)
     self_context_emb = 0.1 * jax.random.normal(k_self_ctx, (cfg.embedding_dim,), dtype=jnp.float32)
     policy_node_emb = 0.1 * jax.random.normal(
         k_policy_emb, (policy_spec.num_nodes, cfg.embedding_dim), dtype=jnp.float32
@@ -307,6 +377,11 @@ def build_template_srghn(
         key=k_det,
     )
 
+    if self_graph is None:
+        self_graph = make_chain_graph(self_spec.num_nodes, bidir=True)
+    if policy_graph is None:
+        policy_graph = make_policy_hierarchical_graph(policy_spec.group_ids, bidir=True)
+
     return SRGHN(
         self_node_emb=self_node_emb,
         self_context_emb=self_context_emb,
@@ -317,9 +392,9 @@ def build_template_srghn(
         encoder_policy=encoder_policy,
         stoch=stoch,
         det=det,
-        self_graph=make_chain_graph(num_self_nodes, bidir=True),
-        policy_graph=make_policy_hierarchical_graph(policy_spec.group_ids, bidir=True),
-        self_spec=_empty_self_spec(),
+        self_graph=self_graph,
+        policy_graph=policy_graph,
+        self_spec=self_spec,
         policy_spec=policy_spec,
         clip_params=cfg.clip_params,
     )
@@ -328,12 +403,7 @@ def build_template_srghn(
 
 def build_srghn_graphs_and_specs(cfg: MetaSineConfig):
     policy_spec = regression_policy_spec(cfg.policy_hidden_dims)
-    setup_key = jax.random.PRNGKey(cfg.seed)
-
-    temp = build_template_srghn(1, policy_spec, cfg, key=setup_key)
-    provisional_self_spec = srghn_self_spec(temp)
-    final = build_template_srghn(provisional_self_spec.num_nodes, policy_spec, cfg, key=setup_key)
-    self_spec = srghn_self_spec(final)
+    self_spec = _srghn_self_spec(policy_spec, cfg)
 
     self_graph = make_self_hierarchical_graph(
         self_spec.group_ids,
@@ -354,11 +424,13 @@ def init_srghn_individual(
 ) -> SRGHN:
     self_graph, policy_graph = graphs
     self_spec, policy_spec = specs
-    indiv = build_template_srghn(self_spec.num_nodes, policy_spec, cfg, key=key)
-    return eqx.tree_at(
-        lambda m: (m.self_graph, m.policy_graph, m.self_spec),
-        indiv,
-        (self_graph, policy_graph, self_spec),
+    return build_srghn_module(
+        self_spec,
+        policy_spec,
+        cfg,
+        key=key,
+        self_graph=self_graph,
+        policy_graph=policy_graph,
     )
 
 
@@ -741,7 +813,7 @@ def srghn_adapt(indiv: SRGHN, key: jax.Array, sx: jnp.ndarray, sy: jnp.ndarray, 
         length=cfg.inner_generations,
     )
     del final_pop, final_fitness
-    return best_seq[-1]
+    return _select_srghn(best_seq, -1)
 
 
 
@@ -1262,40 +1334,47 @@ def run_srghn_condition(cfg: MetaSineConfig, cond: ConditionSpec) -> dict[str, A
     self_spec, policy_spec = specs
 
     init_key = jax.random.PRNGKey(cfg.seed)
-    key_pop, key_loop = jax.random.split(init_key)
-    init_pop = init_srghn_population(key_pop, cfg.outer_pop_size, cfg, (self_graph, policy_graph), (self_spec, policy_spec))
-    init_best = _select_srghn(init_pop, 0)
-    init_state = SRGHNMetaState(
-        pop=init_pop,
-        key=key_loop,
-        pop_fitness=-jnp.inf * jnp.ones((cfg.outer_pop_size,), dtype=jnp.float32),
-        best_fitness=jnp.asarray(-jnp.inf, dtype=jnp.float32),
-        best_indiv=init_best,
-    )
-
     @jax.jit
-    def run_impl(state: SRGHNMetaState):
-        return jax.lax.scan(lambda carry, _: srghn_outer_step(carry, cfg, cond), state, None, length=cfg.outer_generations)
+    def run_impl(key: jax.Array):
+        key_pop, key_loop = jax.random.split(key)
+        init_pop = init_srghn_population(
+            key_pop,
+            cfg.outer_pop_size,
+            cfg,
+            (self_graph, policy_graph),
+            (self_spec, policy_spec),
+        )
+        init_best = _select_srghn(init_pop, 0)
+        init_state = SRGHNMetaState(
+            pop=init_pop,
+            key=key_loop,
+            pop_fitness=-jnp.inf * jnp.ones((cfg.outer_pop_size,), dtype=jnp.float32),
+            best_fitness=jnp.asarray(-jnp.inf, dtype=jnp.float32),
+            best_indiv=init_best,
+        )
+
+        final_state, history = jax.lax.scan(
+            lambda carry, _: srghn_outer_step(carry, cfg, cond),
+            init_state,
+            None,
+            length=cfg.outer_generations,
+        )
+
+        heldout_tasks = sample_sine_tasks(jax.random.PRNGKey(cfg.seed + 10_000), cfg, cfg.test_task_batch_size)
+        heldout_keys = jax.random.split(jax.random.PRNGKey(cfg.seed + 20_000), cfg.test_task_batch_size)
+
+        curves = jax.vmap(
+            lambda sx, sy, qx, qy, task_key: srghn_task_curve(final_state.best_indiv, task_key, sx, sy, qx, qy, cfg, cond)
+        )(heldout_tasks.support_x, heldout_tasks.support_y, heldout_tasks.query_x, heldout_tasks.query_y, heldout_keys)
+        return final_state, history, curves
 
     t0 = time.perf_counter()
-    final_state, history = run_impl(init_state)
+    final_state, history, curves = run_impl(init_key)
     jax.block_until_ready(history["fitness_best"])
-    train_seconds = time.perf_counter() - t0
-
-    champion = final_state.best_indiv
-    heldout_tasks = sample_sine_tasks(jax.random.PRNGKey(cfg.seed + 10_000), cfg, cfg.test_task_batch_size)
-    heldout_keys = jax.random.split(jax.random.PRNGKey(cfg.seed + 20_000), cfg.test_task_batch_size)
-
-    @jax.jit
-    def eval_curves(indiv: SRGHN, tasks: MetaTaskBatch, keys: jax.Array):
-        return jax.vmap(
-            lambda sx, sy, qx, qy, task_key: srghn_task_curve(indiv, task_key, sx, sy, qx, qy, cfg, cond)
-        )(tasks.support_x, tasks.support_y, tasks.query_x, tasks.query_y, keys)
-
-    t1 = time.perf_counter()
-    curves = eval_curves(champion, heldout_tasks, heldout_keys)
     jax.block_until_ready(curves)
-    eval_seconds = time.perf_counter() - t1
+    train_seconds = time.perf_counter() - t0
+    champion = final_state.best_indiv
+    eval_seconds = 0.0
 
     return {
         "kind": "srghn",

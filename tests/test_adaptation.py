@@ -5,6 +5,7 @@ import unittest
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from adaptation_analysis import comparison_label
 from configs import (
@@ -37,6 +38,7 @@ from experiments._adaptation import (
 )
 from experiments._common import build_graphs_and_specs, default_wandb_project, run_experiment, wandb_config_payload
 from evolution import evo_step, init_population, EvoState
+from meta_sine_srghn import MetaSineConfig, parse_condition_spec, run_condition
 from obs_norm import flatten_observation, init_obs_norm, normalize_obs
 from policy import apply_policy
 from policy_vectors import flatten_policy_params, policy_num_dims, unflatten_policy_vector
@@ -56,6 +58,38 @@ class AdaptationTests(unittest.TestCase):
         }
         defaults.update(kwargs)
         return make_config_nonstationary_gymnax(env_id, **defaults)
+
+    def _make_meta_sine_config(self) -> MetaSineConfig:
+        return MetaSineConfig(
+            seed=0,
+            outer_generations=1,
+            meta_batch_size=2,
+            test_task_batch_size=2,
+            outer_pop_size=2,
+            outer_children_per_parent=1,
+            inner_pop_size=2,
+            inner_children_per_parent=1,
+            inner_generations=1,
+            support_k=2,
+            query_k=3,
+            policy_hidden_dims=(8,),
+            embedding_dim=8,
+            gnn_hidden_dim=8,
+            gnn_steps_policy=1,
+            gnn_steps_self=1,
+            stoch_coeff_dim=8,
+            parameter_block_size=16,
+            mutation_rate_head_dim=2,
+        )
+
+    def _assert_array_pytree_allclose(self, a, b):
+        a_arr, _ = eqx.partition(a, eqx.is_array)
+        b_arr, _ = eqx.partition(b, eqx.is_array)
+        a_leaves = jax.tree_util.tree_leaves(a_arr)
+        b_leaves = jax.tree_util.tree_leaves(b_arr)
+        self.assertEqual(len(a_leaves), len(b_leaves))
+        for left, right in zip(a_leaves, b_leaves):
+            np.testing.assert_allclose(np.asarray(left), np.asarray(right))
 
     def test_shift_schedule_window_boundaries(self):
         config = make_config_nonstationary_gymnax(
@@ -370,6 +404,32 @@ class AdaptationTests(unittest.TestCase):
             self.assertFalse(jnp.allclose(indiv.stoch.basis, child.stoch.basis))
         except ModuleNotFoundError as exc:
             self.skipTest(str(exc))
+
+    def test_meta_sine_srghn_smoke_runs_end_to_end(self):
+        cfg = self._make_meta_sine_config()
+        cond = parse_condition_spec("srghn_self_self")
+        payload = run_condition(cfg, cond)
+
+        self.assertEqual(payload["kind"], "srghn")
+        self.assertEqual(payload["train_history"]["fitness_best"].shape, (cfg.outer_generations,))
+        self.assertEqual(payload["adaptation_curve_query_mse"]["mean"].shape, (cfg.inner_generations + 1,))
+        self.assertEqual(payload["final_population_fitness"].shape, (cfg.outer_pop_size,))
+        self.assertTrue(np.isfinite(payload["train_history"]["fitness_best"]).all())
+        self.assertTrue(np.isfinite(payload["adaptation_curve_query_mse"]["mean"]).all())
+        self.assertTrue(np.isfinite(payload["final_population_fitness"]).all())
+
+    def test_meta_sine_srghn_is_deterministic(self):
+        cfg = self._make_meta_sine_config()
+        cond = parse_condition_spec("srghn_self_self")
+        first = run_condition(cfg, cond)
+        second = run_condition(cfg, cond)
+
+        for key in first["train_history"]:
+            np.testing.assert_allclose(first["train_history"][key], second["train_history"][key])
+        self._assert_array_pytree_allclose(first["champion"], second["champion"])
+        np.testing.assert_allclose(first["final_population_fitness"], second["final_population_fitness"])
+        np.testing.assert_allclose(first["adaptation_curve_query_mse"]["mean"], second["adaptation_curve_query_mse"]["mean"])
+        np.testing.assert_allclose(first["adaptation_curve_query_mse"]["stderr"], second["adaptation_curve_query_mse"]["stderr"])
 
     def test_short_cartpole_smoke_runs_all_baselines(self):
         try:

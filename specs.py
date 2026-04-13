@@ -141,8 +141,8 @@ def _key_token_name(key) -> str:
     return str(key)
 
 
-def _self_metadata(
-    path_leaves: Sequence[tuple[tuple[object, ...], jnp.ndarray]],
+def _self_metadata_from_entries(
+    entries: Sequence[tuple[tuple[str, ...], tuple[int, ...]]],
 ) -> tuple[
     tuple[tuple[float, ...], ...],
     tuple[str, ...],
@@ -151,14 +151,6 @@ def _self_metadata(
     tuple[tuple[int, ...], ...],
     int | None,
 ]:
-    entries: list[tuple[tuple[str, ...], tuple[int, ...]]] = []
-    for path, leaf in path_leaves:
-        if leaf is None or not eqx.is_array(leaf):
-            continue
-        tokens = tuple(_key_token_name(key) for key in path)
-        shape = tuple(int(dim) for dim in leaf.shape)
-        entries.append((tokens, shape))
-
     if not entries:
         return (), (), (), (), None
 
@@ -212,6 +204,26 @@ def _self_metadata(
             context_index = len(shapes) - 1
 
     return tuple(features), tuple(module_names), tuple(group_ids), tuple(parent_ids), tuple(shapes), context_index
+
+
+def _self_metadata(
+    path_leaves: Sequence[tuple[tuple[object, ...], jnp.ndarray]],
+) -> tuple[
+    tuple[tuple[float, ...], ...],
+    tuple[str, ...],
+    tuple[int, ...],
+    tuple[int, ...],
+    tuple[tuple[int, ...], ...],
+    int | None,
+]:
+    entries: list[tuple[tuple[str, ...], tuple[int, ...]]] = []
+    for path, leaf in path_leaves:
+        if leaf is None or not eqx.is_array(leaf):
+            continue
+        tokens = tuple(_key_token_name(key) for key in path)
+        shape = tuple(int(dim) for dim in leaf.shape)
+        entries.append((tokens, shape))
+    return _self_metadata_from_entries(entries)
 
 
 def _linear_param_shapes(layer_in: int, layer_out: int) -> Sequence[tuple[int, ...]]:
@@ -437,6 +449,25 @@ def srghn_self_spec(srghn_module: eqx.Module) -> ParamNodeSpec:
     filtered = eqx.filter(srghn_module, filter_spec)
     path_leaves, _ = jax.tree_util.tree_flatten_with_path(filtered)
     node_features, module_names, group_ids, parent_ids, shapes, context_index = _self_metadata(path_leaves)
+    sizes = _sizes_from_shapes(shapes)
+    max_size = max(sizes) if sizes else 0
+    return ParamNodeSpec(
+        shapes=shapes,
+        sizes=sizes,
+        max_size=max_size,
+        num_nodes=len(shapes),
+        node_features=node_features,
+        module_names=module_names,
+        group_ids=group_ids,
+        parent_ids=parent_ids,
+        context_index=context_index,
+    )
+
+
+def srghn_self_spec_from_layout(
+    entries: Sequence[tuple[tuple[str, ...], tuple[int, ...]]],
+) -> ParamNodeSpec:
+    node_features, module_names, group_ids, parent_ids, shapes, context_index = _self_metadata_from_entries(entries)
     sizes = _sizes_from_shapes(shapes)
     max_size = max(sizes) if sizes else 0
     return ParamNodeSpec(
