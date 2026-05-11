@@ -1,5 +1,7 @@
 # sr_ghn_jax
 
+Centralized experiment configuration now lives under `experiment_configs/`. For the canonical preset names, resolved-config behavior, and recommended launch patterns, see [docs/experiment_configuration_reference.md](/Users/jwin/Library/CloudStorage/OneDrive-ITU/desktop/projects/sr_ghn_jax/docs/experiment_configuration_reference.md).
+
 ## Running experiments
 
 Run experiments from the repo root so imports resolve:

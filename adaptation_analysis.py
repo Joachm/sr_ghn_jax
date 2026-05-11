@@ -10,6 +10,7 @@ import jax
 import jax.numpy as jnp
 
 from envs import iter_shift_windows
+from experiment_configs import resolved_config_payload
 
 
 def _to_host(value):
@@ -88,6 +89,7 @@ def build_run_artifact(config, metrics: dict[str, Any]) -> dict[str, Any]:
     host_metrics = _to_host(metrics)
     return {
         "config": config,
+        "resolved_config": resolved_config_payload(config),
         "metrics": host_metrics,
         "summary": summarize_run(host_metrics, config),
     }

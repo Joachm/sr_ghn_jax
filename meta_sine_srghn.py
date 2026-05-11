@@ -18,7 +18,7 @@ import argparse
 import math
 import pickle
 import time
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass
 from functools import partial
 from math import prod
 from pathlib import Path
@@ -42,6 +42,7 @@ from experiments.policy_vectors import (
     unflatten_policy_vector,
     zero_policy_vector,
 )
+from experiment_configs import MetaSineConfig, build_meta_sine_config, print_resolved_config, resolved_config_payload
 
 
 @jax.tree_util.register_pytree_node_class
@@ -168,56 +169,6 @@ class ConditionSpec:
     inner_evosax_algo: str | None = None
     mutation_exclude_modules: tuple[str, ...] = ()
     fixed_mutation_lr: float | None = None
-
-
-@dataclass(frozen=True)
-class MetaSineConfig:
-    seed: int = 0
-
-    outer_generations: int = 300
-    meta_batch_size: int = 8
-    test_task_batch_size: int = 128
-
-    outer_pop_size: int = 32
-    outer_children_per_parent: int = 1
-    inner_pop_size: int = 8
-    inner_children_per_parent: int = 1
-    inner_generations: int = 3
-
-    support_k: int = 5
-    query_k: int = 25
-
-    amplitude_min: float = 0.1
-    amplitude_max: float = 5.0
-    phase_max: float = math.pi
-    x_min: float = -5.0
-    x_max: float = 5.0
-
-    policy_hidden_dims: tuple[int, ...] = (32, 32)
-
-    embedding_dim: int = 32
-    gnn_hidden_dim: int = 32
-    gnn_steps_policy: int = 4
-    gnn_steps_self: int = 4
-    stoch_coeff_dim: int = 32
-    parameter_block_size: int = 64
-    mutation_block_ratio: float = 0.25
-    mutation_rate_head_dim: int = 4
-    clip_params: tuple[float, float] = (-20.0, 20.0)
-    clip_std: tuple[float, float] = (0.0, 2.0)
-    clip_update: tuple[float, float] = (-0.25, 0.25)
-    const_noise_std: float = 1e-3
-
-    vector_ga_sigma: float = 0.05
-    vector_ga_init_scale: float = 0.1
-
-    wandb_project: str | None = "meta_sine_srghn"
-    wandb_group: str | None = None
-    wandb_name: str | None = None
-    wandb_log_plots: bool = False
-
-    outer_evosax_sigma_init: float | None = 0.05
-    inner_evosax_sigma_init: float | None = 0.05
 
 
 # --------------------------------------------------------------------------------------
@@ -1729,7 +1680,7 @@ def maybe_save_plots(output_stem: Path, results: dict[str, Any]) -> None:
 
 
 
-def parse_args() -> argparse.Namespace:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Generic paired-loop sine meta-learning harness.")
     parser.add_argument(
         "--conditions",
@@ -1740,97 +1691,95 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", default="meta_sine_srghn_results.pkl")
     parser.add_argument("--plot", action="store_true")
     parser.add_argument("--fast", action="store_true")
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--outer-generations", type=int, default=1800)
-    parser.add_argument("--meta-batch-size", type=int, default=8)
-    parser.add_argument("--test-task-batch-size", type=int, default=128)
-    parser.add_argument("--outer-pop-size", type=int, default=32)
-    parser.add_argument("--outer-children-per-parent", type=int, default=1)
-    parser.add_argument("--inner-pop-size", type=int, default=8)
-    parser.add_argument("--inner-children-per-parent", type=int, default=1)
-    parser.add_argument("--inner-generations", type=int, default=3)
-    parser.add_argument("--support-k", type=int, default=5)
-    parser.add_argument("--query-k", type=int, default=25)
-    parser.add_argument("--policy-hidden-dims", nargs="+", type=int, default=(32, 32))
-    parser.add_argument("--embedding-dim", type=int, default=32)
-    parser.add_argument("--gnn-hidden-dim", type=int, default=32)
-    parser.add_argument("--gnn-steps-policy", type=int, default=4)
-    parser.add_argument("--gnn-steps-self", type=int, default=4)
-    parser.add_argument("--stoch-coeff-dim", type=int, default=32)
-    parser.add_argument("--parameter-block-size", type=int, default=64)
-    parser.add_argument("--mutation-block-ratio", type=float, default=1.)
-    parser.add_argument("--mutation-rate-head-dim", type=int, default=4)
-    parser.add_argument("--const-noise-std", type=float, default=1e-3)
-    parser.add_argument("--vector-ga-sigma", type=float, default=0.05)
-    parser.add_argument("--vector-ga-init-scale", type=float, default=0.1)
-    parser.add_argument("--outer-evosax-sigma-init", type=float, default=0.05)
-    parser.add_argument("--inner-evosax-sigma-init", type=float, default=0.05)
+    parser.add_argument("--run-preset", default="default", choices=("default", "fast"))
+    parser.add_argument("--print-config", action="store_true")
+    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--outer-generations", type=int, default=None)
+    parser.add_argument("--meta-batch-size", type=int, default=None)
+    parser.add_argument("--test-task-batch-size", type=int, default=None)
+    parser.add_argument("--outer-pop-size", type=int, default=None)
+    parser.add_argument("--outer-children-per-parent", type=int, default=None)
+    parser.add_argument("--inner-pop-size", type=int, default=None)
+    parser.add_argument("--inner-children-per-parent", type=int, default=None)
+    parser.add_argument("--inner-generations", type=int, default=None)
+    parser.add_argument("--support-k", type=int, default=None)
+    parser.add_argument("--query-k", type=int, default=None)
+    parser.add_argument("--policy-hidden-dims", nargs="+", type=int, default=None)
+    parser.add_argument("--embedding-dim", type=int, default=None)
+    parser.add_argument("--gnn-hidden-dim", type=int, default=None)
+    parser.add_argument("--gnn-steps-policy", type=int, default=None)
+    parser.add_argument("--gnn-steps-self", type=int, default=None)
+    parser.add_argument("--stoch-coeff-dim", type=int, default=None)
+    parser.add_argument("--parameter-block-size", type=int, default=None)
+    parser.add_argument("--mutation-block-ratio", type=float, default=None)
+    parser.add_argument("--mutation-rate-head-dim", type=int, default=None)
+    parser.add_argument("--const-noise-std", type=float, default=None)
+    parser.add_argument("--vector-ga-sigma", type=float, default=None)
+    parser.add_argument("--vector-ga-init-scale", type=float, default=None)
+    parser.add_argument("--outer-evosax-sigma-init", type=float, default=None)
+    parser.add_argument("--inner-evosax-sigma-init", type=float, default=None)
     parser.add_argument("--no-wandb", action="store_true")
-    parser.add_argument("--wandb-project", default="meta_sine_srghn_3")
+    parser.add_argument("--wandb-project", default=None)
     parser.add_argument("--wandb-group", default=None)
     parser.add_argument("--wandb-name", default=None)
     parser.add_argument("--wandb-log-plots", action="store_true")
-    return parser.parse_args()
+    return parser
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    return build_parser().parse_args(argv)
 
 
 
 def make_base_cfg(args: argparse.Namespace) -> MetaSineConfig:
-    cfg = MetaSineConfig(
-        seed=args.seed,
-        outer_generations=args.outer_generations,
-        meta_batch_size=args.meta_batch_size,
-        test_task_batch_size=args.test_task_batch_size,
-        outer_pop_size=args.outer_pop_size,
-        outer_children_per_parent=args.outer_children_per_parent,
-        inner_pop_size=args.inner_pop_size,
-        inner_children_per_parent=args.inner_children_per_parent,
-        inner_generations=args.inner_generations,
-        support_k=args.support_k,
-        query_k=args.query_k,
-        policy_hidden_dims=tuple(args.policy_hidden_dims),
-        embedding_dim=args.embedding_dim,
-        gnn_hidden_dim=args.gnn_hidden_dim,
-        gnn_steps_policy=args.gnn_steps_policy,
-        gnn_steps_self=args.gnn_steps_self,
-        stoch_coeff_dim=args.stoch_coeff_dim,
-        parameter_block_size=args.parameter_block_size,
-        mutation_block_ratio=args.mutation_block_ratio,
-        mutation_rate_head_dim=args.mutation_rate_head_dim,
-        const_noise_std=args.const_noise_std,
-        vector_ga_sigma=args.vector_ga_sigma,
-        vector_ga_init_scale=args.vector_ga_init_scale,
-        outer_evosax_sigma_init=args.outer_evosax_sigma_init,
-        inner_evosax_sigma_init=args.inner_evosax_sigma_init,
-        wandb_project=None if args.no_wandb else args.wandb_project,
-        wandb_group=args.wandb_group,
-        wandb_name=args.wandb_name,
-        wandb_log_plots=args.wandb_log_plots,
-    )
-    if args.fast:
-        cfg = replace(
-            cfg,
-            outer_pop_size=16,
-            outer_generations=100,
-            meta_batch_size=8,
-            test_task_batch_size=64,
-            inner_pop_size=6,
-            inner_generations=2,
-            policy_hidden_dims=(16, 16),
-            embedding_dim=16,
-            gnn_hidden_dim=16,
-            gnn_steps_policy=3,
-            gnn_steps_self=3,
-            stoch_coeff_dim=16,
-            parameter_block_size=32,
-            mutation_rate_head_dim=2,
-        )
-    return cfg
+    overrides = {
+        key: value
+        for key, value in {
+            "seed": args.seed,
+            "outer_generations": args.outer_generations,
+            "meta_batch_size": args.meta_batch_size,
+            "test_task_batch_size": args.test_task_batch_size,
+            "outer_pop_size": args.outer_pop_size,
+            "outer_children_per_parent": args.outer_children_per_parent,
+            "inner_pop_size": args.inner_pop_size,
+            "inner_children_per_parent": args.inner_children_per_parent,
+            "inner_generations": args.inner_generations,
+            "support_k": args.support_k,
+            "query_k": args.query_k,
+            "policy_hidden_dims": None if args.policy_hidden_dims is None else tuple(args.policy_hidden_dims),
+            "embedding_dim": args.embedding_dim,
+            "gnn_hidden_dim": args.gnn_hidden_dim,
+            "gnn_steps_policy": args.gnn_steps_policy,
+            "gnn_steps_self": args.gnn_steps_self,
+            "stoch_coeff_dim": args.stoch_coeff_dim,
+            "parameter_block_size": args.parameter_block_size,
+            "mutation_block_ratio": args.mutation_block_ratio,
+            "mutation_rate_head_dim": args.mutation_rate_head_dim,
+            "const_noise_std": args.const_noise_std,
+            "vector_ga_sigma": args.vector_ga_sigma,
+            "vector_ga_init_scale": args.vector_ga_init_scale,
+            "outer_evosax_sigma_init": args.outer_evosax_sigma_init,
+            "inner_evosax_sigma_init": args.inner_evosax_sigma_init,
+            "wandb_project": None if args.no_wandb else args.wandb_project,
+            "wandb_group": args.wandb_group,
+            "wandb_name": args.wandb_name,
+            "wandb_log_plots": args.wandb_log_plots,
+        }.items()
+        if value is not None
+    }
+    if args.no_wandb:
+        overrides["wandb_project"] = None
+    run_preset = "fast" if args.fast else args.run_preset
+    return build_meta_sine_config(run_preset=run_preset, overrides=overrides)
 
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
     base_cfg = make_base_cfg(args)
+    if args.print_config:
+        print_resolved_config(base_cfg, family="meta_sine", run_preset="fast" if args.fast else args.run_preset)
+        return 0
     conditions = [validate_condition(parse_condition_spec(text)) for text in args.conditions]
 
     results: dict[str, Any] = {}
@@ -1851,6 +1800,11 @@ def main() -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     save_payload = {
         "base_config": asdict(base_cfg),
+        "resolved_config": resolved_config_payload(
+            base_cfg,
+            family="meta_sine",
+            run_preset="fast" if args.fast else args.run_preset,
+        ),
         "conditions": [asdict(cond) for cond in conditions],
         "results": results,
     }
@@ -1861,7 +1815,8 @@ def main() -> None:
     if args.plot:
         maybe_save_plots(output_path.with_suffix(""), results)
         print(f"[saved] plots near {output_path.with_suffix('')}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
