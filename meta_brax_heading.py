@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import math
 import pickle
+import shutil
+import subprocess
 import time
 from dataclasses import asdict, dataclass
 from functools import partial
@@ -12,6 +14,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from configs import (
     BASELINE_FIXED_LR,
@@ -58,6 +61,14 @@ POSITION_KEY_PAIRS = (
     ("x_position", "y_position"),
     ("position_x", "position_y"),
 )
+
+SHOWCASE_HEADING_CHOICES = ("auto", "pos_x", "neg_x", "pos_y", "neg_y")
+SHOWCASE_HEADING_BY_CHOICE = {
+    "pos_x": CARDINAL_HEADINGS[0],
+    "neg_x": CARDINAL_HEADINGS[1],
+    "pos_y": CARDINAL_HEADINGS[2],
+    "neg_y": CARDINAL_HEADINGS[3],
+}
 
 
 @jax.tree_util.register_pytree_node_class
@@ -183,9 +194,11 @@ def _wandb_log_summary(cfg: MetaBraxConfig, cond: ConditionSpec, payload: dict[s
         "final/train_fitness_mean": float(history["fitness_mean"][-1]),
         "final/train_query_return_best": float(history["query_return_best"][-1]),
         "final/train_query_return_mean": float(history["query_return_mean"][-1]),
+        "final/train_query_return_best_so_far": float(history["query_return_best_so_far"][-1]),
         "final/train_diversity": float(history["diversity"][-1]),
         "final/final_population_fitness_best": float(jnp.max(final_population_fitness)),
         "final/final_population_fitness_mean": float(jnp.mean(final_population_fitness)),
+        "final/champion_meta_fitness": float(payload["champion_meta_fitness"]),
         "final/heldout_curve_pre_return_mean": float(curve["mean"][0]),
         "final/heldout_curve_post_return_mean": float(curve["mean"][-1]),
         "final/heldout_curve_stderr_post_return": float(curve["stderr"][-1]),
@@ -469,6 +482,319 @@ def evaluate_individual_on_heading(
     return evaluate_policy_params_on_heading(make_policy(indiv), episode_keys, heading, cfg)
 
 
+def _heading_label(heading: jnp.ndarray) -> str:
+    heading_np = tuple(float(value) for value in np.asarray(jax.device_get(heading)).tolist())
+    mapping = {
+        (1.0, 0.0): "+x",
+        (-1.0, 0.0): "-x",
+        (0.0, 1.0): "+y",
+        (0.0, -1.0): "-y",
+    }
+    return mapping.get(heading_np, str(heading_np))
+
+
+def _showcase_heading_from_choice(choice: str) -> jnp.ndarray:
+    if choice not in SHOWCASE_HEADING_BY_CHOICE:
+        raise ValueError(f"Unknown showcase heading choice: {choice}")
+    return jnp.asarray(SHOWCASE_HEADING_BY_CHOICE[choice], dtype=jnp.float32)
+
+
+def _showcase_key_for_index(seed: int, index: int) -> jax.Array:
+    return jax.random.PRNGKey(seed + 30_000 + 997 * index)
+
+
+def _showcase_adapt_key_for_index(seed: int, index: int) -> jax.Array:
+    return jax.random.PRNGKey(seed + 40_000 + 997 * index)
+
+
+def rollout_policy_params_on_heading(
+    policy_params,
+    episode_key: jax.Array,
+    heading: jnp.ndarray,
+    cfg: MetaBraxConfig,
+) -> tuple[list[Any], float]:
+    runtime_config = make_runtime_config(cfg)
+    env, _, _, _, is_discrete, action_shape, action_low, action_high = make_env(runtime_config)
+    if is_discrete:
+        raise ValueError("meta_brax_heading only supports continuous Brax environments.")
+    dt = _infer_env_dt(env)
+
+    def step_once(state_t):
+        obs_t = state_t.obs
+        obs_in = normalize_obs(obs_t, None, clip=cfg.obs_norm_clip, eps=cfg.obs_norm_eps)
+        action = apply_policy(policy_params, obs_in, runtime_config, is_discrete=False)
+        action = jnp.asarray(action, dtype=jnp.float32).reshape(action_shape)
+        if action_low is not None and action_high is not None:
+            action = action_low + (action + 1.0) * 0.5 * (action_high - action_low)
+        next_state = env.step(state_t, action)
+        reward = _projected_heading_reward(state_t, next_state, heading, dt)
+        done = bool(jax.device_get(jnp.asarray(next_state.done, dtype=jnp.bool_)))
+        return next_state, float(jax.device_get(reward)), done
+
+    step_once_jit = jax.jit(step_once)
+
+    state = env.reset(episode_key)
+    trajectory = [jax.device_get(state)]
+    total_reward = 0.0
+    done = False
+
+    for _ in range(cfg.episode_horizon):
+        if done:
+            trajectory.append(jax.device_get(state))
+            continue
+        state, reward, done = step_once_jit(state)
+        total_reward += reward
+        trajectory.append(jax.device_get(state))
+
+    return trajectory, total_reward
+
+
+def rollout_individual_on_heading(
+    indiv: SRGHN,
+    episode_key: jax.Array,
+    heading: jnp.ndarray,
+    cfg: MetaBraxConfig,
+) -> tuple[list[Any], float]:
+    return rollout_policy_params_on_heading(make_policy(indiv), episode_key, heading, cfg)
+
+
+def _pipeline_trajectory(trajectory: list[Any]) -> list[Any]:
+    pipeline_states = []
+    for state in trajectory:
+        pipeline_state = getattr(state, "pipeline_state", None)
+        if pipeline_state is not None:
+            pipeline_states.append(pipeline_state)
+            continue
+        qp = getattr(state, "qp", None)
+        if qp is not None:
+            pipeline_states.append(qp)
+            continue
+        raise ValueError("Expected Brax env state to expose `.pipeline_state` or `.qp` for rendering.")
+    return pipeline_states
+
+
+def _normalize_video_frames(frames) -> np.ndarray:
+    if isinstance(frames, (list, tuple)):
+        frames = np.stack([np.asarray(frame) for frame in frames], axis=0)
+    else:
+        frames = np.asarray(frames)
+
+    if frames.ndim != 4:
+        raise ValueError(f"Expected rendered frames to have rank 4, got shape {frames.shape}.")
+    if frames.shape[-1] == 4:
+        frames = frames[..., :3]
+    if frames.dtype == np.uint8:
+        return frames
+    if np.issubdtype(frames.dtype, np.floating):
+        max_val = float(np.max(frames)) if frames.size else 0.0
+        if max_val <= 1.0:
+            frames = frames * 255.0
+    return np.clip(frames, 0, 255).astype(np.uint8)
+
+
+def _downsample_frames(frames: np.ndarray, max_frames: int) -> np.ndarray:
+    if max_frames <= 0 or frames.shape[0] <= max_frames:
+        return frames
+    indices = np.linspace(0, frames.shape[0] - 1, num=max_frames, dtype=np.int32)
+    return frames[indices]
+
+
+def _side_by_side_frames(
+    before_frames: np.ndarray,
+    after_frames: np.ndarray,
+    *,
+    heading_label: str,
+    before_return: float,
+    after_return: float,
+) -> np.ndarray:
+    frame_count = min(before_frames.shape[0], after_frames.shape[0])
+    before_frames = before_frames[:frame_count]
+    after_frames = after_frames[:frame_count]
+    separator = np.full((frame_count, before_frames.shape[1], 6, 3), 255, dtype=np.uint8)
+    combined = np.concatenate([before_frames, separator, after_frames], axis=2)
+
+    try:
+        from PIL import Image, ImageDraw
+    except Exception:
+        return combined
+
+    banner_height = 40
+    banner = Image.new("RGB", (combined.shape[2], banner_height), (18, 18, 18))
+    draw = ImageDraw.Draw(banner)
+    draw.text((12, 12), f"Before adaptation  return={before_return:.1f}", fill=(255, 255, 255))
+    draw.text(
+        (before_frames.shape[2] + separator.shape[2] + 12, 12),
+        f"After adaptation  return={after_return:.1f}",
+        fill=(255, 255, 255),
+    )
+    heading_text = f"Hidden heading: {heading_label}"
+    if hasattr(draw, "textbbox"):
+        left, _, right, _ = draw.textbbox((0, 0), heading_text)
+        heading_x = max((combined.shape[2] - (right - left)) // 2, 12)
+    else:
+        heading_x = max(combined.shape[2] // 2 - 60, 12)
+    draw.text((heading_x, 12), heading_text, fill=(180, 220, 255))
+
+    banner_arr = np.asarray(banner, dtype=np.uint8)
+    banner_arr = np.repeat(banner_arr[None, ...], frame_count, axis=0)
+    return np.concatenate([banner_arr, combined], axis=1)
+
+
+def _write_video_ffmpeg(frames: np.ndarray, output_path: Path, fps: int) -> None:
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        raise RuntimeError("ffmpeg is required to write mp4 output but was not found on PATH.")
+    if frames.ndim != 4 or frames.shape[-1] != 3:
+        raise ValueError(f"Expected RGB frames with shape (T, H, W, 3), got {frames.shape}.")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    height, width = int(frames.shape[1]), int(frames.shape[2])
+    cmd = [
+        ffmpeg,
+        "-y",
+        "-f",
+        "rawvideo",
+        "-vcodec",
+        "rawvideo",
+        "-pix_fmt",
+        "rgb24",
+        "-s",
+        f"{width}x{height}",
+        "-r",
+        str(fps),
+        "-i",
+        "-",
+        "-an",
+        "-vcodec",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        str(output_path),
+    ]
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        _, stderr = proc.communicate(frames.tobytes())
+    except Exception:
+        proc.kill()
+        proc.wait()
+        raise
+    if proc.returncode != 0:
+        raise RuntimeError(stderr.decode("utf-8", errors="replace") or "ffmpeg failed to encode video.")
+
+
+def choose_showcase_episode(
+    indiv: SRGHN,
+    cfg: MetaBraxConfig,
+    cond: ConditionSpec,
+    *,
+    heading_choice: str = "auto",
+) -> dict[str, Any]:
+    query_episodes = max(int(cfg.query_episodes), 1)
+    candidate_items = (
+        SHOWCASE_HEADING_BY_CHOICE.items()
+        if heading_choice == "auto"
+        else ((heading_choice, _showcase_heading_from_choice(heading_choice)),)
+    )
+    best_payload: dict[str, Any] | None = None
+
+    for idx, (choice_name, heading) in enumerate(candidate_items):
+        episode_key = _showcase_key_for_index(cfg.seed, idx)
+        support_keys, query_keys = split_support_query_episode_keys(
+            episode_key,
+            cfg.support_episodes,
+            query_episodes,
+        )
+        query_key = query_keys[0]
+        before_return = float(jax.device_get(evaluate_individual_on_heading(indiv, query_keys[:1], heading, cfg)))
+        if cfg.inner_generations > 0 and cfg.support_episodes > 0:
+            adapted = srghn_adapt(
+                indiv,
+                _showcase_adapt_key_for_index(cfg.seed, idx),
+                support_keys,
+                heading,
+                cfg,
+                cond,
+            )
+        else:
+            adapted = indiv
+        after_return = float(jax.device_get(evaluate_individual_on_heading(adapted, query_keys[:1], heading, cfg)))
+        payload = {
+            "choice": choice_name,
+            "heading": jax.device_get(heading),
+            "heading_label": _heading_label(heading),
+            "support_keys": support_keys,
+            "query_key": query_key,
+            "before_return": before_return,
+            "after_return": after_return,
+            "improvement": after_return - before_return,
+            "adapted": adapted,
+        }
+        if best_payload is None or payload["improvement"] > best_payload["improvement"]:
+            best_payload = payload
+
+    if best_payload is None:
+        raise RuntimeError("No showcase heading candidates were evaluated.")
+    return best_payload
+
+
+def render_showcase_video(
+    indiv: SRGHN,
+    cfg: MetaBraxConfig,
+    cond: ConditionSpec,
+    output_path: Path,
+    *,
+    heading_choice: str = "auto",
+    width: int = 640,
+    height: int = 480,
+    fps: int = 30,
+    max_frames: int = 240,
+    camera: str | None = None,
+) -> dict[str, Any]:
+    try:
+        from brax.io import image as brax_image
+    except Exception as exc:
+        raise RuntimeError("Brax rendering requires `brax` with `brax.io.image` available.") from exc
+
+    showcase = choose_showcase_episode(indiv, cfg, cond, heading_choice=heading_choice)
+    heading = jnp.asarray(showcase["heading"], dtype=jnp.float32)
+    before_trajectory, before_return = rollout_individual_on_heading(indiv, showcase["query_key"], heading, cfg)
+    after_trajectory, after_return = rollout_individual_on_heading(showcase["adapted"], showcase["query_key"], heading, cfg)
+
+    runtime_config = make_runtime_config(cfg)
+    env, _, _, _, _, _, _, _ = make_env(runtime_config)
+    sys = getattr(env, "sys", None)
+    if sys is None:
+        raise RuntimeError("Expected Brax environment to expose `env.sys` for rendering.")
+
+    before_frames = _normalize_video_frames(
+        brax_image.render_array(sys, _pipeline_trajectory(before_trajectory), height=height, width=width, camera=camera)
+    )
+    after_frames = _normalize_video_frames(
+        brax_image.render_array(sys, _pipeline_trajectory(after_trajectory), height=height, width=width, camera=camera)
+    )
+    before_frames = _downsample_frames(before_frames, max_frames)
+    after_frames = _downsample_frames(after_frames, max_frames)
+    showcase_frames = _side_by_side_frames(
+        before_frames,
+        after_frames,
+        heading_label=showcase["heading_label"],
+        before_return=before_return,
+        after_return=after_return,
+    )
+    _write_video_ffmpeg(showcase_frames, output_path, fps)
+
+    return {
+        "output_path": str(output_path),
+        "heading_choice": showcase["choice"],
+        "heading_label": showcase["heading_label"],
+        "before_return": before_return,
+        "after_return": after_return,
+        "improvement": after_return - before_return,
+        "num_frames": int(showcase_frames.shape[0]),
+        "fps": int(fps),
+    }
+
+
 def _stack_parent_with_children(parent: SRGHN, children: SRGHN) -> SRGHN:
     parent_arr, _ = eqx.partition(parent, eqx.is_array)
     child_arr, child_static = eqx.partition(children, eqx.is_array)
@@ -711,14 +1037,15 @@ def srghn_outer_step(state: SRGHNMetaState, gen: jnp.ndarray, cfg: MetaBraxConfi
     )
     elite_metadata = jax.tree_util.tree_map(lambda value: value[select_idx], candidate_metadata)
 
-    metrics = compute_experiment_metrics(state.pop, all_fitness, parent_metadata, elite_metadata)
-    metrics["query_return_best"] = metrics["fitness_best"]
-    metrics["query_return_mean"] = metrics["fitness_mean"]
-    jax.debug.callback(partial(_wandb_log_metrics, prefix="train"), metrics, gen)
-
     gen_best_idx = jnp.argmax(next_fitness)
     gen_best = _select_srghn(next_pop, gen_best_idx)
     gen_best_fit = next_fitness[gen_best_idx]
+
+    metrics = compute_experiment_metrics(state.pop, all_fitness, parent_metadata, elite_metadata)
+    metrics["query_return_best"] = metrics["fitness_best"]
+    metrics["query_return_mean"] = metrics["fitness_mean"]
+    metrics["query_return_best_so_far"] = jnp.maximum(state.best_fitness, gen_best_fit)
+    jax.debug.callback(partial(_wandb_log_metrics, prefix="train"), metrics, gen)
     improved = gen_best_fit > state.best_fitness
     best_indiv = jax.lax.cond(improved, lambda _: gen_best, lambda _: state.best_indiv, operand=None)
     best_fitness = jnp.maximum(state.best_fitness, gen_best_fit)
@@ -784,6 +1111,7 @@ def run_condition(cfg: MetaBraxConfig, cond: ConditionSpec) -> dict[str, Any]:
         "train_history": _history_to_host(history),
         "adaptation_curve_query_return": _summary_from_curves(curves),
         "final_population_fitness": jax.device_get(final_state.pop_fitness),
+        "champion_meta_fitness": float(jax.device_get(final_state.best_fitness)),
     }
     _wandb_log_summary(cfg, cond, summary_payload)
     _wandb_finish_run()
@@ -797,6 +1125,7 @@ def run_condition(cfg: MetaBraxConfig, cond: ConditionSpec) -> dict[str, Any]:
         "train_history": _history_to_host(history),
         "adaptation_curve_query_return": _summary_from_curves(curves),
         "final_population_fitness": jax.device_get(final_state.pop_fitness),
+        "champion_meta_fitness": float(jax.device_get(final_state.best_fitness)),
         "champion": champion,
         "train_seconds": train_seconds,
         "eval_seconds": eval_seconds,
@@ -840,6 +1169,25 @@ def maybe_save_plots(output_stem: Path, results: dict[str, Any]) -> None:
     plt.close(fig)
 
 
+def add_showcase_video_args(
+    parser: argparse.ArgumentParser,
+    *,
+    include_toggle: bool = True,
+    include_output_dir: bool = True,
+) -> argparse.ArgumentParser:
+    if include_toggle:
+        parser.add_argument("--video", action="store_true", help="Render a before/after adaptation showcase mp4 after training.")
+    if include_output_dir:
+        parser.add_argument("--video-output-dir", default=None, help="Directory for showcase videos. Defaults near --output.")
+    parser.add_argument("--video-heading", default="auto", choices=SHOWCASE_HEADING_CHOICES)
+    parser.add_argument("--video-width", type=int, default=640)
+    parser.add_argument("--video-height", type=int, default=480)
+    parser.add_argument("--video-fps", type=int, default=30)
+    parser.add_argument("--video-max-frames", type=int, default=240)
+    parser.add_argument("--video-camera", default=None)
+    return parser
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Meta-RL benchmark for Brax Ant with hidden cardinal headings.")
     parser.add_argument("--conditions", nargs="+", default=BASELINE_NAMES)
@@ -878,7 +1226,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--wandb-group", default=None)
     parser.add_argument("--wandb-name", default=None)
     parser.add_argument("--wandb-log-plots", action="store_true")
-    return parser
+    return add_showcase_video_args(parser)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -969,6 +1317,34 @@ def main(argv: list[str] | None = None) -> int:
     with output_path.open("wb") as handle:
         pickle.dump(save_payload, handle, protocol=pickle.HIGHEST_PROTOCOL)
     print(f"[saved] {output_path}")
+
+    if args.video:
+        video_dir = Path(args.video_output_dir) if args.video_output_dir is not None else output_path.with_suffix("")
+        video_dir.mkdir(parents=True, exist_ok=True)
+        for cond in conditions:
+            payload = results[cond.name]
+            video_path = video_dir / f"{output_path.stem}_{cond.name}_showcase.mp4"
+            try:
+                showcase = render_showcase_video(
+                    payload["champion"],
+                    base_cfg,
+                    cond,
+                    video_path,
+                    heading_choice=args.video_heading,
+                    width=args.video_width,
+                    height=args.video_height,
+                    fps=args.video_fps,
+                    max_frames=args.video_max_frames,
+                    camera=args.video_camera,
+                )
+                print(
+                    "[saved] showcase video "
+                    f"{video_path} heading={showcase['heading_label']} "
+                    f"before={showcase['before_return']:.1f} after={showcase['after_return']:.1f}",
+                    flush=True,
+                )
+            except Exception as exc:
+                print(f"[warn] failed to render showcase video for {cond.name}: {exc}", flush=True)
 
     if args.plot:
         maybe_save_plots(output_path.with_suffix(""), results)

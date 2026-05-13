@@ -86,6 +86,20 @@ class MetaBraxHeadingTests(unittest.TestCase):
         position_velocity = mb._extract_planar_velocity(next_state_positions, prev_state, dt)
         np.testing.assert_allclose(np.asarray(metric_velocity), np.asarray(position_velocity))
 
+    def test_heading_label_and_choice_mapping(self):
+        self.assertEqual(mb._heading_label(jnp.asarray([1.0, 0.0], dtype=jnp.float32)), "+x")
+        self.assertEqual(mb._heading_label(jnp.asarray([0.0, -1.0], dtype=jnp.float32)), "-y")
+        np.testing.assert_allclose(
+            np.asarray(mb._showcase_heading_from_choice("pos_y")),
+            np.asarray([0.0, 1.0], dtype=np.float32),
+        )
+
+    def test_downsample_frames_caps_frame_count(self):
+        frames = np.zeros((100, 8, 8, 3), dtype=np.uint8)
+        sampled = mb._downsample_frames(frames, 12)
+        self.assertEqual(sampled.shape[0], 12)
+        self.assertEqual(sampled.shape[1:], frames.shape[1:])
+
     def test_baseline_condition_mapping_matches_existing_overrides(self):
         full = mb.parse_condition_spec(BASELINE_FULL, fixed_mutation_lr=0.02)
         frozen = mb.parse_condition_spec(BASELINE_FROZEN_MUTATION, fixed_mutation_lr=0.02)

@@ -23,6 +23,8 @@ python -m experiments.gymnax_nonstationary_suite --optimizer-family evosax --evo
 bash run_gymnax_minatar_suite.sh --skip-existing
 python -m experiments.gymnax_minatar_suite --optimizer-family evosax --evosax-algo OpenES --skip-existing
 python -m baselines.ppo.suite --skip-existing
+python meta_brax_heading.py --conditions srghn_full --video
+python render_meta_brax_heading_result.py --input meta_brax_heading_results.pkl --condition srghn_full
 ```
 
 MuJoCo Playground runs now also save a replayable solution artifact:
