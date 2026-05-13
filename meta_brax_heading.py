@@ -528,8 +528,8 @@ def rollout_policy_params_on_heading(
             action = action_low + (action + 1.0) * 0.5 * (action_high - action_low)
         next_state = env.step(state_t, action)
         reward = _projected_heading_reward(state_t, next_state, heading, dt)
-        done = bool(jax.device_get(jnp.asarray(next_state.done, dtype=jnp.bool_)))
-        return next_state, float(jax.device_get(reward)), done
+        done = jnp.asarray(next_state.done, dtype=jnp.bool_)
+        return next_state, reward.astype(jnp.float32), done
 
     step_once_jit = jax.jit(step_once)
 
@@ -543,7 +543,8 @@ def rollout_policy_params_on_heading(
             trajectory.append(jax.device_get(state))
             continue
         state, reward, done = step_once_jit(state)
-        total_reward += reward
+        total_reward += float(jax.device_get(reward))
+        done = bool(jax.device_get(done))
         trajectory.append(jax.device_get(state))
 
     return trajectory, total_reward

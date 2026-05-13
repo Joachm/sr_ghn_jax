@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import importlib
 import unittest
+from collections import namedtuple
 from types import SimpleNamespace
+from unittest import mock
 
 import jax
 import jax.numpy as jnp
@@ -99,6 +101,63 @@ class MetaBraxHeadingTests(unittest.TestCase):
         sampled = mb._downsample_frames(frames, 12)
         self.assertEqual(sampled.shape[0], 12)
         self.assertEqual(sampled.shape[1:], frames.shape[1:])
+
+    def test_rollout_policy_params_on_heading_keeps_done_outside_jit(self):
+        PosState = namedtuple("PosState", ["pos"])
+        PipelineState = namedtuple("PipelineState", ["x"])
+        RolloutState = namedtuple("RolloutState", ["obs", "done", "pipeline_state"])
+
+        def make_pipeline_state_array(x_value):
+            pos = jnp.stack(
+                [
+                    jnp.stack(
+                        [
+                            jnp.asarray(x_value, dtype=jnp.float32),
+                            jnp.asarray(0.0, dtype=jnp.float32),
+                            jnp.asarray(0.0, dtype=jnp.float32),
+                        ]
+                    )
+                ]
+            )
+            return PipelineState(x=PosState(pos=pos))
+
+        class DummyEnv:
+            observation_size = 1
+            action_size = 1
+
+            def reset(self, key):
+                del key
+                return RolloutState(
+                    obs=jnp.asarray([0.0], dtype=jnp.float32),
+                    done=jnp.asarray(False),
+                    pipeline_state=make_pipeline_state_array(0.0),
+                )
+
+            def step(self, state, action):
+                del action
+                current_x = state.pipeline_state.x.pos[0, 0]
+                next_x = current_x + 0.1
+                return RolloutState(
+                    obs=jnp.asarray([next_x], dtype=jnp.float32),
+                    done=jnp.asarray(next_x >= 0.2),
+                    pipeline_state=make_pipeline_state_array(next_x),
+                )
+
+        cfg = mb.MetaBraxConfig(episode_horizon=4, query_episodes=1, support_episodes=1, wandb_project=None)
+        heading = jnp.asarray([1.0, 0.0], dtype=jnp.float32)
+        episode_key = jax.random.PRNGKey(0)
+
+        with (
+            mock.patch.object(mb, "make_runtime_config", return_value=SimpleNamespace(env_backend="brax", obs_norm_clip=5.0, obs_norm_eps=1e-8)),
+            mock.patch.object(mb, "make_env", return_value=(DummyEnv(), None, 1, 1, False, (1,), None, None)),
+            mock.patch.object(mb, "_infer_env_dt", return_value=0.1),
+            mock.patch.object(mb, "normalize_obs", side_effect=lambda obs, *_args, **_kwargs: obs),
+            mock.patch.object(mb, "apply_policy", return_value=jnp.asarray([0.0], dtype=jnp.float32)),
+        ):
+            trajectory, total_reward = mb.rollout_policy_params_on_heading(object(), episode_key, heading, cfg)
+
+        self.assertGreaterEqual(len(trajectory), 2)
+        self.assertTrue(np.isfinite(total_reward))
 
     def test_baseline_condition_mapping_matches_existing_overrides(self):
         full = mb.parse_condition_spec(BASELINE_FULL, fixed_mutation_lr=0.02)
