@@ -40,7 +40,7 @@ class MetaBraxHeadingTests(unittest.TestCase):
         module = importlib.import_module("experiments.nonstationary_brax")
         self.assertTrue(hasattr(module, "main"))
 
-    def test_heading_sampling_is_deterministic_and_cardinal(self):
+    def test_random_cardinal_heading_sampling_is_deterministic_and_cardinal(self):
         key = jax.random.PRNGKey(0)
         first = mb.sample_heading_tasks(key, 32)
         second = mb.sample_heading_tasks(key, 32)
@@ -50,7 +50,7 @@ class MetaBraxHeadingTests(unittest.TestCase):
         observed = {tuple(row.tolist()) for row in np.asarray(first.headings)}
         self.assertTrue(observed.issubset(allowed))
 
-    def test_heading_sampling_is_approximately_uniform(self):
+    def test_random_cardinal_heading_sampling_is_approximately_uniform(self):
         batch = mb.sample_heading_tasks(jax.random.PRNGKey(1), 4000)
         headings = np.asarray(batch.headings)
         allowed = np.asarray(mb.CARDINAL_HEADINGS)
@@ -60,6 +60,29 @@ class MetaBraxHeadingTests(unittest.TestCase):
         expected = headings.shape[0] / allowed.shape[0]
         for count in counts:
             self.assertLess(abs(count - expected), expected * 0.2)
+
+    def test_fixed_training_heading_tasks_are_exactly_cardinal_set(self):
+        batch = mb.fixed_training_heading_tasks(4)
+        np.testing.assert_allclose(np.asarray(batch.headings), np.asarray(mb.CARDINAL_HEADINGS))
+
+    def test_fixed_training_heading_tasks_require_four_tasks(self):
+        with self.assertRaises(ValueError):
+            mb.fixed_training_heading_tasks(3)
+
+    def test_heldout_heading_sampling_is_deterministic_and_unit_norm(self):
+        key = jax.random.PRNGKey(7)
+        first = mb.sample_heldout_heading_tasks(key, 16)
+        second = mb.sample_heldout_heading_tasks(key, 16)
+        np.testing.assert_allclose(np.asarray(first.headings), np.asarray(second.headings))
+        norms = np.linalg.norm(np.asarray(first.headings), axis=1)
+        np.testing.assert_allclose(norms, np.ones_like(norms), atol=1e-5)
+
+    def test_heldout_heading_sampling_is_not_restricted_to_cardinals(self):
+        batch = mb.sample_heldout_heading_tasks(jax.random.PRNGKey(11), 64)
+        headings = np.asarray(batch.headings)
+        allowed = {tuple(row.tolist()) for row in np.asarray(mb.CARDINAL_HEADINGS)}
+        observed = {tuple(np.round(row, 5).tolist()) for row in headings}
+        self.assertFalse(observed.issubset(allowed))
 
     def test_support_and_query_episode_keys_are_disjoint(self):
         support, query = mb.split_support_query_episode_keys(jax.random.PRNGKey(2), 3, 4)

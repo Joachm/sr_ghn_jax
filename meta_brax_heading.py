@@ -302,6 +302,27 @@ def sample_heading_tasks(key: jax.Array, batch_size: int) -> BraxHeadingTaskBatc
     return BraxHeadingTaskBatch(headings=headings)
 
 
+def fixed_training_heading_tasks(meta_batch_size: int) -> BraxHeadingTaskBatch:
+    if meta_batch_size != CARDINAL_HEADINGS.shape[0]:
+        raise ValueError(
+            "This benchmark now uses a fixed training task set of the 4 cardinal headings, "
+            f"so meta_batch_size must be {CARDINAL_HEADINGS.shape[0]}, got {meta_batch_size}."
+        )
+    return BraxHeadingTaskBatch(headings=CARDINAL_HEADINGS)
+
+
+def sample_heldout_heading_tasks(key: jax.Array, batch_size: int) -> BraxHeadingTaskBatch:
+    angles = jax.random.uniform(
+        key,
+        (batch_size,),
+        minval=0.0,
+        maxval=2.0 * jnp.pi,
+        dtype=jnp.float32,
+    )
+    headings = jnp.stack([jnp.cos(angles), jnp.sin(angles)], axis=-1)
+    return BraxHeadingTaskBatch(headings=headings)
+
+
 def split_support_query_episode_keys(
     key: jax.Array,
     support_episodes: int,
@@ -691,11 +712,11 @@ def choose_showcase_episode(
     heading_choice: str = "auto",
 ) -> dict[str, Any]:
     query_episodes = max(int(cfg.query_episodes), 1)
-    candidate_items = (
-        SHOWCASE_HEADING_BY_CHOICE.items()
-        if heading_choice == "auto"
-        else ((heading_choice, _showcase_heading_from_choice(heading_choice)),)
-    )
+    if heading_choice == "auto":
+        auto_tasks = sample_heldout_heading_tasks(jax.random.PRNGKey(cfg.seed + 50_000), 8)
+        candidate_items = tuple((f"auto_{idx}", heading) for idx, heading in enumerate(auto_tasks.headings))
+    else:
+        candidate_items = ((heading_choice, _showcase_heading_from_choice(heading_choice)),)
     best_payload: dict[str, Any] | None = None
 
     for idx, (choice_name, heading) in enumerate(candidate_items):
@@ -998,7 +1019,8 @@ def srghn_meta_fitness(
 
 def srghn_outer_step(state: SRGHNMetaState, gen: jnp.ndarray, cfg: MetaBraxConfig, cond: ConditionSpec):
     key_next, key_tasks, key_eval, key_evolve = jax.random.split(state.key, 4)
-    tasks = sample_heading_tasks(key_tasks, cfg.meta_batch_size)
+    del key_tasks
+    tasks = fixed_training_heading_tasks(cfg.meta_batch_size)
     eval_keys = jax.random.split(key_eval, cfg.outer_pop_size * (1 + cfg.outer_children_per_parent))
 
     def batched_fitness(indiv: SRGHN, eval_key: jax.Array) -> jnp.ndarray:
@@ -1083,7 +1105,7 @@ def run_srghn_compiled(cfg: MetaBraxConfig, cond: ConditionSpec, key: jax.Array)
         generations,
     )
 
-    heldout_tasks = sample_heading_tasks(jax.random.PRNGKey(cfg.seed + 10_000), cfg.heldout_task_batch_size)
+    heldout_tasks = sample_heldout_heading_tasks(jax.random.PRNGKey(cfg.seed + 10_000), cfg.heldout_task_batch_size)
     heldout_keys = jax.random.split(jax.random.PRNGKey(cfg.seed + 20_000), cfg.heldout_task_batch_size)
 
     curves = jax.vmap(
