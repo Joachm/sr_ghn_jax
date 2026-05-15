@@ -119,6 +119,19 @@ class MetaBraxHeadingTests(unittest.TestCase):
             np.asarray([0.0, 1.0], dtype=np.float32),
         )
 
+    def test_training_auto_showcase_uses_cardinal_set(self):
+        cfg = mb.MetaBraxConfig(query_episodes=1, support_episodes=1, inner_generations=0, wandb_project=None)
+        cond = mb.parse_condition_spec(BASELINE_FULL, fixed_mutation_lr=cfg.baseline_fixed_mutation_lr)
+
+        with (
+            mock.patch.object(mb, "evaluate_individual_on_heading", return_value=jnp.asarray(1.0, dtype=jnp.float32)),
+        ):
+            payload = mb.choose_showcase_episode(object(), cfg, cond, heading_choice="training_auto")
+
+        heading = np.asarray(payload["heading"])
+        allowed = np.asarray(mb.CARDINAL_HEADINGS)
+        self.assertTrue(any(np.allclose(heading, candidate) for candidate in allowed))
+
     def test_downsample_frames_caps_frame_count(self):
         frames = np.zeros((100, 8, 8, 3), dtype=np.uint8)
         sampled = mb._downsample_frames(frames, 12)

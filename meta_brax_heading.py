@@ -62,7 +62,7 @@ POSITION_KEY_PAIRS = (
     ("position_x", "position_y"),
 )
 
-SHOWCASE_HEADING_CHOICES = ("auto", "pos_x", "neg_x", "pos_y", "neg_y")
+SHOWCASE_HEADING_CHOICES = ("auto", "training_auto", "pos_x", "neg_x", "pos_y", "neg_y")
 SHOWCASE_HEADING_BY_CHOICE = {
     "pos_x": CARDINAL_HEADINGS[0],
     "neg_x": CARDINAL_HEADINGS[1],
@@ -803,6 +803,8 @@ def choose_showcase_episode(
     if heading_choice == "auto":
         auto_tasks = sample_heldout_heading_tasks(jax.random.PRNGKey(cfg.seed + 50_000), 8)
         candidate_items = tuple((f"auto_{idx}", heading) for idx, heading in enumerate(auto_tasks.headings))
+    elif heading_choice == "training_auto":
+        candidate_items = tuple((name, heading) for name, heading in SHOWCASE_HEADING_BY_CHOICE.items())
     else:
         candidate_items = ((heading_choice, _showcase_heading_from_choice(heading_choice)),)
     best_payload: dict[str, Any] | None = None

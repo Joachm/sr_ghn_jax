@@ -19,6 +19,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--input", required=True, help="Path to meta_brax_heading results pickle.")
     parser.add_argument("--condition", default=None, help="Condition name to render. Required if the file has multiple results.")
     parser.add_argument("--output", default=None, help="Output mp4 path. Defaults to <input-stem>_<condition>_showcase.mp4.")
+    parser.add_argument(
+        "--heading-source",
+        default="heldout",
+        choices=("heldout", "training"),
+        help="Choose showcase tasks from random held-out directions or the four cardinal training directions.",
+    )
     return add_showcase_video_args(parser, include_toggle=False, include_output_dir=False)
 
 
@@ -54,12 +60,15 @@ def main(argv: list[str] | None = None) -> int:
     output_path = Path(args.output) if args.output is not None else input_path.with_name(
         f"{input_path.stem}_{condition_name}_showcase.mp4"
     )
+    heading_choice = args.video_heading
+    if args.heading_source == "training" and heading_choice == "auto":
+        heading_choice = "training_auto"
     showcase = render_showcase_artifacts(
         champion,
         cfg,
         cond,
         output_path,
-        heading_choice=args.video_heading,
+        heading_choice=heading_choice,
         width=args.video_width,
         height=args.video_height,
         fps=args.video_fps,
