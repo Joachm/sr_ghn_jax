@@ -704,6 +704,94 @@ def _write_video_ffmpeg(frames: np.ndarray, output_path: Path, fps: int) -> None
         raise RuntimeError(stderr.decode("utf-8", errors="replace") or "ffmpeg failed to encode video.")
 
 
+def _trajectory_positions_xy(trajectory: list[Any]) -> np.ndarray:
+    positions: list[np.ndarray] = []
+    for state in trajectory:
+        position = _extract_planar_position_from_state(state)
+        if position is None:
+            raise ValueError("Unable to extract planar position for top-down trajectory plotting.")
+        positions.append(np.asarray(jax.device_get(position), dtype=np.float32))
+    return np.stack(positions, axis=0)
+
+
+def save_showcase_topdown_plot(
+    output_path: Path,
+    *,
+    heading: jnp.ndarray,
+    heading_label: str,
+    before_trajectory: list[Any],
+    after_trajectory: list[Any],
+    before_return: float,
+    after_return: float,
+) -> dict[str, Any]:
+    try:
+        import matplotlib.pyplot as plt
+    except Exception as exc:
+        raise RuntimeError("matplotlib is required to save the top-down trajectory plot.") from exc
+
+    before_xy = _trajectory_positions_xy(before_trajectory)
+    after_xy = _trajectory_positions_xy(after_trajectory)
+    heading_xy = np.asarray(jax.device_get(jnp.asarray(heading, dtype=jnp.float32)), dtype=np.float32)
+
+    all_xy = np.concatenate([before_xy, after_xy], axis=0)
+    origin = before_xy[0]
+    max_extent = float(np.max(np.abs(all_xy - origin))) if all_xy.size else 1.0
+    arrow_scale = max(max_extent * 0.6, 1.0)
+    heading_arrow = heading_xy * arrow_scale
+
+    fig, ax = plt.subplots(figsize=(6.5, 6.5))
+    ax.plot(before_xy[:, 0], before_xy[:, 1], color="#d95f02", linewidth=2.0, label=f"Before ({before_return:.1f})")
+    ax.plot(after_xy[:, 0], after_xy[:, 1], color="#1b9e77", linewidth=2.0, label=f"After ({after_return:.1f})")
+
+    ax.scatter(before_xy[0, 0], before_xy[0, 1], color="black", s=50, marker="o", label="Start")
+    ax.scatter(before_xy[-1, 0], before_xy[-1, 1], color="#d95f02", s=60, marker="x", label="Before end")
+    ax.scatter(after_xy[-1, 0], after_xy[-1, 1], color="#1b9e77", s=60, marker="x", label="After end")
+
+    ax.arrow(
+        origin[0],
+        origin[1],
+        heading_arrow[0],
+        heading_arrow[1],
+        width=max(arrow_scale * 0.01, 0.01),
+        head_width=max(arrow_scale * 0.08, 0.08),
+        head_length=max(arrow_scale * 0.12, 0.12),
+        length_includes_head=True,
+        color="#377eb8",
+        alpha=0.9,
+    )
+    ax.text(
+        origin[0] + heading_arrow[0],
+        origin[1] + heading_arrow[1],
+        f" goal {heading_label}",
+        color="#377eb8",
+        fontsize=10,
+        va="bottom",
+    )
+
+    ax.set_title(f"Meta-Brax showcase top-down view\nGoal direction {heading_label}")
+    ax.set_xlabel("x position")
+    ax.set_ylabel("y position")
+    ax.set_aspect("equal", adjustable="box")
+    ax.grid(True, alpha=0.25)
+    ax.legend(loc="best")
+
+    padding = max(max_extent * 0.15, 0.5)
+    ax.set_xlim(float(np.min(all_xy[:, 0])) - padding, float(np.max(all_xy[:, 0])) + padding)
+    ax.set_ylim(float(np.min(all_xy[:, 1])) - padding, float(np.max(all_xy[:, 1])) + padding)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=180)
+    plt.close(fig)
+
+    return {
+        "output_path": str(output_path),
+        "before_start": before_xy[0].tolist(),
+        "before_end": before_xy[-1].tolist(),
+        "after_end": after_xy[-1].tolist(),
+    }
+
+
 def choose_showcase_episode(
     indiv: SRGHN,
     cfg: MetaBraxConfig,
@@ -772,6 +860,46 @@ def render_showcase_video(
     max_frames: int = 240,
     camera: str | None = None,
 ) -> dict[str, Any]:
+    payload = render_showcase_artifacts(
+        indiv,
+        cfg,
+        cond,
+        output_path,
+        heading_choice=heading_choice,
+        width=width,
+        height=height,
+        fps=fps,
+        max_frames=max_frames,
+        camera=camera,
+        plot_output_path=output_path.with_suffix(".png"),
+    )
+    return {
+        "output_path": payload["video_output_path"],
+        "plot_output_path": payload["plot_output_path"],
+        "heading_choice": payload["heading_choice"],
+        "heading_label": payload["heading_label"],
+        "before_return": payload["before_return"],
+        "after_return": payload["after_return"],
+        "improvement": payload["improvement"],
+        "num_frames": payload["num_frames"],
+        "fps": payload["fps"],
+    }
+
+
+def render_showcase_artifacts(
+    indiv: SRGHN,
+    cfg: MetaBraxConfig,
+    cond: ConditionSpec,
+    video_output_path: Path,
+    *,
+    heading_choice: str = "auto",
+    width: int = 640,
+    height: int = 480,
+    fps: int = 30,
+    max_frames: int = 240,
+    camera: str | None = None,
+    plot_output_path: Path | None = None,
+) -> dict[str, Any]:
     try:
         from brax.io import image as brax_image
     except Exception as exc:
@@ -803,10 +931,22 @@ def render_showcase_video(
         before_return=before_return,
         after_return=after_return,
     )
-    _write_video_ffmpeg(showcase_frames, output_path, fps)
+    _write_video_ffmpeg(showcase_frames, video_output_path, fps)
+
+    resolved_plot_output = plot_output_path or video_output_path.with_suffix(".png")
+    plot_payload = save_showcase_topdown_plot(
+        resolved_plot_output,
+        heading=heading,
+        heading_label=showcase["heading_label"],
+        before_trajectory=before_trajectory,
+        after_trajectory=after_trajectory,
+        before_return=before_return,
+        after_return=after_return,
+    )
 
     return {
-        "output_path": str(output_path),
+        "video_output_path": str(video_output_path),
+        "plot_output_path": str(resolved_plot_output),
         "heading_choice": showcase["choice"],
         "heading_label": showcase["heading_label"],
         "before_return": before_return,
@@ -814,6 +954,7 @@ def render_showcase_video(
         "improvement": after_return - before_return,
         "num_frames": int(showcase_frames.shape[0]),
         "fps": int(fps),
+        "plot": plot_payload,
     }
 
 
@@ -1362,7 +1503,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 print(
                     "[saved] showcase video "
-                    f"{video_path} heading={showcase['heading_label']} "
+                    f"{video_path} plot={showcase['plot_output_path']} heading={showcase['heading_label']} "
                     f"before={showcase['before_return']:.1f} after={showcase['after_return']:.1f}",
                     flush=True,
                 )

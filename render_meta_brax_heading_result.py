@@ -8,7 +8,7 @@ from experiment_configs import MetaBraxConfig
 from meta_brax_heading import (
     ConditionSpec,
     add_showcase_video_args,
-    render_showcase_video,
+    render_showcase_artifacts,
 )
 
 
@@ -54,7 +54,7 @@ def main(argv: list[str] | None = None) -> int:
     output_path = Path(args.output) if args.output is not None else input_path.with_name(
         f"{input_path.stem}_{condition_name}_showcase.mp4"
     )
-    showcase = render_showcase_video(
+    showcase = render_showcase_artifacts(
         champion,
         cfg,
         cond,
@@ -68,6 +68,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(
         f"[saved] {output_path} "
+        f"plot={showcase['plot_output_path']} "
         f"heading={showcase['heading_label']} "
         f"before={showcase['before_return']:.1f} "
         f"after={showcase['after_return']:.1f} "

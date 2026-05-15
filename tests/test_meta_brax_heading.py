@@ -125,6 +125,18 @@ class MetaBraxHeadingTests(unittest.TestCase):
         self.assertEqual(sampled.shape[0], 12)
         self.assertEqual(sampled.shape[1:], frames.shape[1:])
 
+    def test_trajectory_positions_xy_extracts_planar_track(self):
+        trajectory = [
+            _make_state(x=0.0, y=0.0),
+            _make_state(x=0.5, y=-0.2),
+            _make_state(x=1.0, y=0.3),
+        ]
+        positions = mb._trajectory_positions_xy(trajectory)
+        np.testing.assert_allclose(
+            positions,
+            np.asarray([[0.0, 0.0], [0.5, -0.2], [1.0, 0.3]], dtype=np.float32),
+        )
+
     def test_rollout_policy_params_on_heading_keeps_done_outside_jit(self):
         PosState = namedtuple("PosState", ["pos"])
         PipelineState = namedtuple("PipelineState", ["x"])
