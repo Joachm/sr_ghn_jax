@@ -201,6 +201,9 @@ def _wandb_log_summary(cfg: MetaBraxConfig, cond: ConditionSpec, payload: dict[s
         "final/champion_meta_fitness": float(payload["champion_meta_fitness"]),
         "final/heldout_curve_pre_return_mean": float(curve["mean"][0]),
         "final/heldout_curve_post_return_mean": float(curve["mean"][-1]),
+        "final/heldout_curve_pre_return_min": float(curve["min"][0]),
+        "final/heldout_curve_post_return_min": float(curve["min"][-1]),
+        "final/heldout_curve_improvement_min": float(curve["min"][-1] - curve["min"][0]),
         "final/heldout_curve_stderr_post_return": float(curve["stderr"][-1]),
         "final/heldout_curve_improvement_mean": float(curve["mean"][-1] - curve["mean"][0]),
         "final/heldout_curve_length": int(len(curve["mean"])),
@@ -259,6 +262,8 @@ def _summary_from_curves(curves: jnp.ndarray) -> dict[str, Any]:
     return {
         "all": curves_host,
         "mean": curves_host.mean(axis=0),
+        "min": curves_host.min(axis=0),
+        "max": curves_host.max(axis=0),
         "std": curves_host.std(axis=0),
         "stderr": curves_host.std(axis=0) / math.sqrt(max(curves_host.shape[0], 1)),
     }
@@ -1157,7 +1162,7 @@ def srghn_meta_fitness(
         adapted = srghn_adapt(indiv, key_adapt, support_keys, heading, cfg, cond)
         return evaluate_individual_on_heading(adapted, query_keys, heading, cfg)
 
-    return jnp.mean(jax.vmap(per_task)(tasks.headings, task_keys))
+    return jnp.min(jax.vmap(per_task)(tasks.headings, task_keys))
 
 
 def srghn_outer_step(state: SRGHNMetaState, gen: jnp.ndarray, cfg: MetaBraxConfig, cond: ConditionSpec):

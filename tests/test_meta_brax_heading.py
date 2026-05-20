@@ -207,6 +207,40 @@ class MetaBraxHeadingTests(unittest.TestCase):
         self.assertGreaterEqual(len(trajectory), 2)
         self.assertTrue(np.isfinite(total_reward))
 
+    def test_meta_fitness_uses_worst_task_return(self):
+        cfg = mb.MetaBraxConfig(
+            meta_batch_size=4,
+            support_episodes=1,
+            query_episodes=1,
+            inner_generations=0,
+            wandb_project=None,
+        )
+        cond = mb.parse_condition_spec(BASELINE_FULL, fixed_mutation_lr=cfg.baseline_fixed_mutation_lr)
+        tasks = mb.BraxHeadingTaskBatch(headings=mb.CARDINAL_HEADINGS)
+
+        def fake_adapt(indiv, key, support_keys, heading, cfg, cond):
+            del indiv, key, support_keys, cfg, cond
+            return heading
+
+        def fake_eval(indiv, episode_keys, heading, cfg):
+            del episode_keys, cfg
+            table = {
+                (1.0, 0.0): 7.0,
+                (-1.0, 0.0): 3.0,
+                (0.0, 1.0): 5.0,
+                (0.0, -1.0): 9.0,
+            }
+            key = tuple(np.asarray(heading).tolist())
+            return jnp.asarray(table[key], dtype=jnp.float32)
+
+        with (
+            mock.patch.object(mb, "srghn_adapt", side_effect=fake_adapt),
+            mock.patch.object(mb, "evaluate_individual_on_heading", side_effect=fake_eval),
+        ):
+            fitness = mb.srghn_meta_fitness(object(), jax.random.PRNGKey(0), tasks, cfg, cond)
+
+        self.assertAlmostEqual(float(fitness), 3.0, places=5)
+
     def test_baseline_condition_mapping_matches_existing_overrides(self):
         full = mb.parse_condition_spec(BASELINE_FULL, fixed_mutation_lr=0.02)
         frozen = mb.parse_condition_spec(BASELINE_FROZEN_MUTATION, fixed_mutation_lr=0.02)
