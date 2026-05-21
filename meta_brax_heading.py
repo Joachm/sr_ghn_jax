@@ -1156,7 +1156,6 @@ def srghn_meta_fitness(
 
 def srghn_outer_step(state: SRGHNMetaState, gen: jnp.ndarray, cfg: MetaBraxConfig, cond: ConditionSpec):
     key_next, key_tasks, key_eval, key_evolve = jax.random.split(state.key, 4)
-    del key_tasks
     tasks = sample_heading_tasks(key_tasks, cfg.meta_batch_size)
     eval_keys = jax.random.split(key_eval, cfg.outer_pop_size * (1 + cfg.outer_children_per_parent))
 
