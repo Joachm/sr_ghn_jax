@@ -40,34 +40,20 @@ class MetaBraxHeadingTests(unittest.TestCase):
         module = importlib.import_module("experiments.nonstationary_brax")
         self.assertTrue(hasattr(module, "main"))
 
-    def test_random_cardinal_heading_sampling_is_deterministic_and_cardinal(self):
+    def test_training_heading_sampling_is_deterministic_and_unit_norm(self):
         key = jax.random.PRNGKey(0)
         first = mb.sample_heading_tasks(key, 32)
         second = mb.sample_heading_tasks(key, 32)
         np.testing.assert_array_equal(np.asarray(first.headings), np.asarray(second.headings))
+        norms = np.linalg.norm(np.asarray(first.headings), axis=1)
+        np.testing.assert_allclose(norms, np.ones_like(norms), atol=1e-5)
 
-        allowed = {tuple(row.tolist()) for row in np.asarray(mb.CARDINAL_HEADINGS)}
-        observed = {tuple(row.tolist()) for row in np.asarray(first.headings)}
-        self.assertTrue(observed.issubset(allowed))
-
-    def test_random_cardinal_heading_sampling_is_approximately_uniform(self):
-        batch = mb.sample_heading_tasks(jax.random.PRNGKey(1), 4000)
+    def test_training_heading_sampling_is_not_restricted_to_cardinals(self):
+        batch = mb.sample_heading_tasks(jax.random.PRNGKey(1), 64)
         headings = np.asarray(batch.headings)
-        allowed = np.asarray(mb.CARDINAL_HEADINGS)
-        counts = []
-        for heading in allowed:
-            counts.append(int(np.all(headings == heading, axis=1).sum()))
-        expected = headings.shape[0] / allowed.shape[0]
-        for count in counts:
-            self.assertLess(abs(count - expected), expected * 0.2)
-
-    def test_fixed_training_heading_tasks_are_exactly_cardinal_set(self):
-        batch = mb.fixed_training_heading_tasks(4)
-        np.testing.assert_allclose(np.asarray(batch.headings), np.asarray(mb.CARDINAL_HEADINGS))
-
-    def test_fixed_training_heading_tasks_require_four_tasks(self):
-        with self.assertRaises(ValueError):
-            mb.fixed_training_heading_tasks(3)
+        allowed = {tuple(np.round(row, 5).tolist()) for row in np.asarray(mb.CARDINAL_HEADINGS)}
+        observed = {tuple(np.round(row, 5).tolist()) for row in headings}
+        self.assertFalse(observed.issubset(allowed))
 
     def test_heldout_heading_sampling_is_deterministic_and_unit_norm(self):
         key = jax.random.PRNGKey(7)
@@ -119,7 +105,7 @@ class MetaBraxHeadingTests(unittest.TestCase):
             np.asarray([0.0, 1.0], dtype=np.float32),
         )
 
-    def test_training_auto_showcase_uses_cardinal_set(self):
+    def test_training_auto_showcase_uses_continuous_training_directions(self):
         cfg = mb.MetaBraxConfig(query_episodes=1, support_episodes=1, inner_generations=0, wandb_project=None)
         cond = mb.parse_condition_spec(BASELINE_FULL, fixed_mutation_lr=cfg.baseline_fixed_mutation_lr)
 
@@ -129,8 +115,9 @@ class MetaBraxHeadingTests(unittest.TestCase):
             payload = mb.choose_showcase_episode(object(), cfg, cond, heading_choice="training_auto")
 
         heading = np.asarray(payload["heading"])
+        self.assertAlmostEqual(np.linalg.norm(heading), 1.0, places=5)
         allowed = np.asarray(mb.CARDINAL_HEADINGS)
-        self.assertTrue(any(np.allclose(heading, candidate) for candidate in allowed))
+        self.assertFalse(any(np.allclose(heading, candidate) for candidate in allowed))
 
     def test_downsample_frames_caps_frame_count(self):
         frames = np.zeros((100, 8, 8, 3), dtype=np.uint8)
@@ -209,7 +196,7 @@ class MetaBraxHeadingTests(unittest.TestCase):
 
     def test_meta_fitness_uses_worst_task_return(self):
         cfg = mb.MetaBraxConfig(
-            meta_batch_size=4,
+            meta_batch_size=8,
             support_episodes=1,
             query_episodes=1,
             inner_generations=0,
@@ -239,7 +226,7 @@ class MetaBraxHeadingTests(unittest.TestCase):
         ):
             fitness = mb.srghn_meta_fitness(object(), jax.random.PRNGKey(0), tasks, cfg, cond)
 
-        self.assertAlmostEqual(float(fitness), 3.0, places=5)
+        self.assertAlmostEqual(float(fitness), 6.0, places=5)
 
     def test_baseline_condition_mapping_matches_existing_overrides(self):
         full = mb.parse_condition_spec(BASELINE_FULL, fixed_mutation_lr=0.02)
@@ -269,8 +256,8 @@ class MetaBraxHeadingTests(unittest.TestCase):
                 brax_backend="spring",
                 seed=0,
                 outer_generations=1,
-                meta_batch_size=1,
-                heldout_task_batch_size=1,
+                meta_batch_size=8,
+                heldout_task_batch_size=8,
                 outer_pop_size=2,
                 outer_children_per_parent=1,
                 inner_pop_size=2,

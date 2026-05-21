@@ -302,21 +302,6 @@ def make_runtime_config(cfg: MetaBraxConfig):
 
 
 def sample_heading_tasks(key: jax.Array, batch_size: int) -> BraxHeadingTaskBatch:
-    task_ids = jax.random.randint(key, (batch_size,), 0, CARDINAL_HEADINGS.shape[0], dtype=jnp.int32)
-    headings = CARDINAL_HEADINGS[task_ids]
-    return BraxHeadingTaskBatch(headings=headings)
-
-
-def fixed_training_heading_tasks(meta_batch_size: int) -> BraxHeadingTaskBatch:
-    if meta_batch_size != CARDINAL_HEADINGS.shape[0]:
-        raise ValueError(
-            "This benchmark now uses a fixed training task set of the 4 cardinal headings, "
-            f"so meta_batch_size must be {CARDINAL_HEADINGS.shape[0]}, got {meta_batch_size}."
-        )
-    return BraxHeadingTaskBatch(headings=CARDINAL_HEADINGS)
-
-
-def sample_heldout_heading_tasks(key: jax.Array, batch_size: int) -> BraxHeadingTaskBatch:
     angles = jax.random.uniform(
         key,
         (batch_size,),
@@ -326,6 +311,9 @@ def sample_heldout_heading_tasks(key: jax.Array, batch_size: int) -> BraxHeading
     )
     headings = jnp.stack([jnp.cos(angles), jnp.sin(angles)], axis=-1)
     return BraxHeadingTaskBatch(headings=headings)
+
+def sample_heldout_heading_tasks(key: jax.Array, batch_size: int) -> BraxHeadingTaskBatch:
+    return sample_heading_tasks(key, batch_size)
 
 
 def split_support_query_episode_keys(
@@ -809,7 +797,8 @@ def choose_showcase_episode(
         auto_tasks = sample_heldout_heading_tasks(jax.random.PRNGKey(cfg.seed + 50_000), 8)
         candidate_items = tuple((f"auto_{idx}", heading) for idx, heading in enumerate(auto_tasks.headings))
     elif heading_choice == "training_auto":
-        candidate_items = tuple((name, heading) for name, heading in SHOWCASE_HEADING_BY_CHOICE.items())
+        auto_tasks = sample_heading_tasks(jax.random.PRNGKey(cfg.seed + 60_000), 8)
+        candidate_items = tuple((f"train_{idx}", heading) for idx, heading in enumerate(auto_tasks.headings))
     else:
         candidate_items = ((heading_choice, _showcase_heading_from_choice(heading_choice)),)
     best_payload: dict[str, Any] | None = None
@@ -1162,13 +1151,13 @@ def srghn_meta_fitness(
         adapted = srghn_adapt(indiv, key_adapt, support_keys, heading, cfg, cond)
         return evaluate_individual_on_heading(adapted, query_keys, heading, cfg)
 
-    return jnp.min(jax.vmap(per_task)(tasks.headings, task_keys))
+    return jnp.mean(jax.vmap(per_task)(tasks.headings, task_keys))
 
 
 def srghn_outer_step(state: SRGHNMetaState, gen: jnp.ndarray, cfg: MetaBraxConfig, cond: ConditionSpec):
     key_next, key_tasks, key_eval, key_evolve = jax.random.split(state.key, 4)
     del key_tasks
-    tasks = fixed_training_heading_tasks(cfg.meta_batch_size)
+    tasks = sample_heading_tasks(key_tasks, cfg.meta_batch_size)
     eval_keys = jax.random.split(key_eval, cfg.outer_pop_size * (1 + cfg.outer_children_per_parent))
 
     def batched_fitness(indiv: SRGHN, eval_key: jax.Array) -> jnp.ndarray:
@@ -1360,7 +1349,7 @@ def add_showcase_video_args(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Meta-RL benchmark for Brax Ant with hidden cardinal headings.")
+    parser = argparse.ArgumentParser(description="Meta-RL benchmark for Brax Ant with hidden headings.")
     parser.add_argument("--conditions", nargs="+", default=BASELINE_NAMES)
     parser.add_argument("--output", default="meta_brax_heading_results.pkl")
     parser.add_argument("--plot", action="store_true")

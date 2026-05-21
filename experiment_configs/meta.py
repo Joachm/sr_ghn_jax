@@ -52,7 +52,7 @@ class MetaBraxConfig:
     brax_backend: str | None = "spring"
     seed: int = 0
     outer_generations: int = 200
-    meta_batch_size: int = 4
+    meta_batch_size: int = 8
     heldout_task_batch_size: int = 16
     outer_pop_size: int = 16
     outer_children_per_parent: int = 1
@@ -115,8 +115,8 @@ META_BRAX_RUN_PRESETS: dict[str, dict[str, Any]] = {
     "default": {},
     "fast": {
         "outer_generations": 2,
-        "meta_batch_size": 2,
-        "heldout_task_batch_size": 2,
+        "meta_batch_size": 6,
+        "heldout_task_batch_size": 8,
         "outer_pop_size": 2,
         "inner_pop_size": 2,
         "inner_generations": 1,
