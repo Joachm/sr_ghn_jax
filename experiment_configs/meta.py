@@ -76,6 +76,8 @@ class MetaBraxConfig:
     clip_update: tuple[float, float] = (-0.1, 0.1)
     const_noise_std: float = 1e-3
     baseline_fixed_mutation_lr: float = 0.02
+    outer_evosax_sigma_init: float | None = 0.05
+    inner_evosax_sigma_init: float | None = 0.05
     obs_norm_clip: float = 5.0
     obs_norm_eps: float = 1e-8
     wandb_project: str | None = "meta_brax_heading"

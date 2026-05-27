@@ -1,0 +1,278 @@
+[
+  {
+    "after_return": 3590.2029501199722,
+    "before_return": 2845.570103796199,
+    "heading": "(0.9464248418807983, -0.32292425632476807)",
+    "improvement": 744.6328463237733,
+    "plot": {
+      "after_end": [
+        0.021906398236751556,
+        -0.04714782163500786
+      ],
+      "before_end": [
+        0.021906398236751556,
+        -0.04714782163500786
+      ],
+      "before_start": [
+        0.021906398236751556,
+        -0.04714782163500786
+      ],
+      "output_path": "meta_brax_heading_results_srghn_full_batch/00_0p9464248418807983__m0p32292425632476807_score_3590p2.png"
+    },
+    "plot_path": "meta_brax_heading_results_srghn_full_batch/00_0p9464248418807983__m0p32292425632476807_score_3590p2.png",
+    "video_path": "meta_brax_heading_results_srghn_full_batch/00_0p9464248418807983__m0p32292425632476807_score_3590p2.mp4"
+  },
+  {
+    "after_return": 3657.0557715753093,
+    "before_return": 3336.040793822147,
+    "heading": "(0.9909569025039673, -0.1341806948184967)",
+    "improvement": 321.0149777531624,
+    "plot": {
+      "after_end": [
+        -0.09378071129322052,
+        -0.0687655657529831
+      ],
+      "before_end": [
+        -0.09378071129322052,
+        -0.0687655657529831
+      ],
+      "before_start": [
+        -0.09378071129322052,
+        -0.0687655657529831
+      ],
+      "output_path": "meta_brax_heading_results_srghn_full_batch/01_0p9909569025039673__m0p1341806948184967_score_3657p1.png"
+    },
+    "plot_path": "meta_brax_heading_results_srghn_full_batch/01_0p9909569025039673__m0p1341806948184967_score_3657p1.png",
+    "video_path": "meta_brax_heading_results_srghn_full_batch/01_0p9909569025039673__m0p1341806948184967_score_3657p1.mp4"
+  },
+  {
+    "after_return": 3080.657381039113,
+    "before_return": -570.8773449286819,
+    "heading": "(-0.4943203628063202, 0.8692798018455505)",
+    "improvement": 3651.5347259677947,
+    "plot": {
+      "after_end": [
+        -0.09768497943878174,
+        -0.03897681459784508
+      ],
+      "before_end": [
+        -0.09768497943878174,
+        -0.03897681459784508
+      ],
+      "before_start": [
+        -0.09768497943878174,
+        -0.03897681459784508
+      ],
+      "output_path": "meta_brax_heading_results_srghn_full_batch/02_m0p4943203628063202__0p8692798018455505_score_3080p7.png"
+    },
+    "plot_path": "meta_brax_heading_results_srghn_full_batch/02_m0p4943203628063202__0p8692798018455505_score_3080p7.png",
+    "video_path": "meta_brax_heading_results_srghn_full_batch/02_m0p4943203628063202__0p8692798018455505_score_3080p7.mp4"
+  },
+  {
+    "after_return": 1795.4881974309683,
+    "before_return": -3154.6530920416117,
+    "heading": "(-0.9806851744651794, 0.19559280574321747)",
+    "improvement": 4950.14128947258,
+    "plot": {
+      "after_end": [
+        -0.0492747537791729,
+        0.007607840001583099
+      ],
+      "before_end": [
+        -0.0492747537791729,
+        0.007607840001583099
+      ],
+      "before_start": [
+        -0.0492747537791729,
+        0.007607840001583099
+      ],
+      "output_path": "meta_brax_heading_results_srghn_full_batch/03_m0p9806851744651794__0p19559280574321747_score_1795p5.png"
+    },
+    "plot_path": "meta_brax_heading_results_srghn_full_batch/03_m0p9806851744651794__0p19559280574321747_score_1795p5.png",
+    "video_path": "meta_brax_heading_results_srghn_full_batch/03_m0p9806851744651794__0p19559280574321747_score_1795p5.mp4"
+  },
+  {
+    "after_return": 3327.14153496176,
+    "before_return": -3507.260354422033,
+    "heading": "(-0.9051245450973511, -0.4251464903354645)",
+    "improvement": 6834.401889383793,
+    "plot": {
+      "after_end": [
+        0.05759800225496292,
+        -0.07363466918468475
+      ],
+      "before_end": [
+        0.05759800225496292,
+        -0.07363466918468475
+      ],
+      "before_start": [
+        0.05759800225496292,
+        -0.07363466918468475
+      ],
+      "output_path": "meta_brax_heading_results_srghn_full_batch/04_m0p9051245450973511__m0p4251464903354645_score_3327p1.png"
+    },
+    "plot_path": "meta_brax_heading_results_srghn_full_batch/04_m0p9051245450973511__m0p4251464903354645_score_3327p1.png",
+    "video_path": "meta_brax_heading_results_srghn_full_batch/04_m0p9051245450973511__m0p4251464903354645_score_3327p1.mp4"
+  },
+  {
+    "after_return": 3076.7642255611718,
+    "before_return": 2463.3432326847687,
+    "heading": "(0.5063183307647705, 0.8623466491699219)",
+    "improvement": 613.420992876403,
+    "plot": {
+      "after_end": [
+        -0.02745208889245987,
+        -0.012663960456848145
+      ],
+      "before_end": [
+        -0.02745208889245987,
+        -0.012663960456848145
+      ],
+      "before_start": [
+        -0.02745208889245987,
+        -0.012663960456848145
+      ],
+      "output_path": "meta_brax_heading_results_srghn_full_batch/05_0p5063183307647705__0p8623466491699219_score_3076p8.png"
+    },
+    "plot_path": "meta_brax_heading_results_srghn_full_batch/05_0p5063183307647705__0p8623466491699219_score_3076p8.png",
+    "video_path": "meta_brax_heading_results_srghn_full_batch/05_0p5063183307647705__0p8623466491699219_score_3076p8.mp4"
+  },
+  {
+    "after_return": 2697.4833240509033,
+    "before_return": -161.32120497524738,
+    "heading": "(-0.3692612051963806, 0.9293256402015686)",
+    "improvement": 2858.8045290261507,
+    "plot": {
+      "after_end": [
+        0.017415426671504974,
+        -0.07375343143939972
+      ],
+      "before_end": [
+        0.017415426671504974,
+        -0.07375343143939972
+      ],
+      "before_start": [
+        0.017415426671504974,
+        -0.07375343143939972
+      ],
+      "output_path": "meta_brax_heading_results_srghn_full_batch/06_m0p3692612051963806__0p9293256402015686_score_2697p5.png"
+    },
+    "plot_path": "meta_brax_heading_results_srghn_full_batch/06_m0p3692612051963806__0p9293256402015686_score_2697p5.png",
+    "video_path": "meta_brax_heading_results_srghn_full_batch/06_m0p3692612051963806__0p9293256402015686_score_2697p5.mp4"
+  },
+  {
+    "after_return": 3126.296423494816,
+    "before_return": -2543.682422284037,
+    "heading": "(-0.3711570203304291, -0.9285700917243958)",
+    "improvement": 5669.978845778853,
+    "plot": {
+      "after_end": [
+        -0.06564787030220032,
+        0.03624770790338516
+      ],
+      "before_end": [
+        -0.06564787030220032,
+        0.03624770790338516
+      ],
+      "before_start": [
+        -0.06564787030220032,
+        0.03624770790338516
+      ],
+      "output_path": "meta_brax_heading_results_srghn_full_batch/07_m0p3711570203304291__m0p9285700917243958_score_3126p3.png"
+    },
+    "plot_path": "meta_brax_heading_results_srghn_full_batch/07_m0p3711570203304291__m0p9285700917243958_score_3126p3.png",
+    "video_path": "meta_brax_heading_results_srghn_full_batch/07_m0p3711570203304291__m0p9285700917243958_score_3126p3.mp4"
+  },
+  {
+    "after_return": 3490.858159016818,
+    "before_return": -1286.862981621176,
+    "heading": "(-0.020314715802669525, -0.9997936487197876)",
+    "improvement": 4777.721140637994,
+    "plot": {
+      "after_end": [
+        -0.08923640102148056,
+        0.06608539074659348
+      ],
+      "before_end": [
+        -0.08923640102148056,
+        0.06608539074659348
+      ],
+      "before_start": [
+        -0.08923640102148056,
+        0.06608539074659348
+      ],
+      "output_path": "meta_brax_heading_results_srghn_full_batch/08_m0p020314715802669525__m0p9997936487197876_score_3490p9.png"
+    },
+    "plot_path": "meta_brax_heading_results_srghn_full_batch/08_m0p020314715802669525__m0p9997936487197876_score_3490p9.png",
+    "video_path": "meta_brax_heading_results_srghn_full_batch/08_m0p020314715802669525__m0p9997936487197876_score_3490p9.mp4"
+  },
+  {
+    "after_return": 3538.437609896064,
+    "before_return": 2816.9339447133243,
+    "heading": "(0.4761577546596527, 0.8793599009513855)",
+    "improvement": 721.5036651827395,
+    "plot": {
+      "after_end": [
+        0.024416401982307434,
+        0.045236892998218536
+      ],
+      "before_end": [
+        0.024416401982307434,
+        0.045236892998218536
+      ],
+      "before_start": [
+        0.024416401982307434,
+        0.045236892998218536
+      ],
+      "output_path": "meta_brax_heading_results_srghn_full_batch/09_0p4761577546596527__0p8793599009513855_score_3538p4.png"
+    },
+    "plot_path": "meta_brax_heading_results_srghn_full_batch/09_0p4761577546596527__0p8793599009513855_score_3538p4.png",
+    "video_path": "meta_brax_heading_results_srghn_full_batch/09_0p4761577546596527__0p8793599009513855_score_3538p4.mp4"
+  },
+  {
+    "after_return": 3706.845969364047,
+    "before_return": 3440.1712166443467,
+    "heading": "(0.9957687258720398, -0.09189479798078537)",
+    "improvement": 266.67475271970034,
+    "plot": {
+      "after_end": [
+        -0.060361623764038086,
+        0.07448511570692062
+      ],
+      "before_end": [
+        -0.060361623764038086,
+        0.07448511570692062
+      ],
+      "before_start": [
+        -0.060361623764038086,
+        0.07448511570692062
+      ],
+      "output_path": "meta_brax_heading_results_srghn_full_batch/10_0p9957687258720398__m0p09189479798078537_score_3706p8.png"
+    },
+    "plot_path": "meta_brax_heading_results_srghn_full_batch/10_0p9957687258720398__m0p09189479798078537_score_3706p8.png",
+    "video_path": "meta_brax_heading_results_srghn_full_batch/10_0p9957687258720398__m0p09189479798078537_score_3706p8.mp4"
+  },
+  {
+    "after_return": 3635.373182276264,
+    "before_return": 3578.0183690600097,
+    "heading": "(0.9874089956283569, 0.1581881195306778)",
+    "improvement": 57.354813216254115,
+    "plot": {
+      "after_end": [
+        -0.009229563176631927,
+        -0.025899365544319153
+      ],
+      "before_end": [
+        -0.009229563176631927,
+        -0.025899365544319153
+      ],
+      "before_start": [
+        -0.009229563176631927,
+        -0.025899365544319153
+      ],
+      "output_path": "meta_brax_heading_results_srghn_full_batch/11_0p9874089956283569__0p1581881195306778_score_3635p4.png"
+    },
+    "plot_path": "meta_brax_heading_results_srghn_full_batch/11_0p9874089956283569__0p1581881195306778_score_3635p4.png",
+    "video_path": "meta_brax_heading_results_srghn_full_batch/11_0p9874089956283569__0p1581881195306778_score_3635p4.mp4"
+  }
+]

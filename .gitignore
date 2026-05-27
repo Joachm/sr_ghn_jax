@@ -213,3 +213,5 @@ wandb/
 artifacts/
 *.pkl
 *.mp4
+*.zip
+

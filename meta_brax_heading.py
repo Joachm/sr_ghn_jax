@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass
 from functools import partial
 from pathlib import Path
 from typing import Any
+from types import SimpleNamespace
 
 import equinox as eqx
 import jax
@@ -27,11 +28,14 @@ from configs import (
 from envs import make_env
 from evolution import init_population
 from experiments._common import build_graphs_and_specs
+from experiments.evosax_adapter import EvosaxStrategyAdapter
 from metrics import compute_experiment_metrics
 from obs_norm import normalize_obs
 from policy import apply_policy
+from policy_vectors import init_policy_vector_population, policy_num_dims, unflatten_policy_vector, zero_policy_vector
 from srghn import SRGHN, make_policy, mutate_with_metadata, mutation_metadata
 from experiment_configs import MetaBraxConfig, build_meta_brax_config, print_resolved_config, resolved_config_payload
+from metrics import compute_vector_metrics
 
 
 CARDINAL_HEADINGS = jnp.asarray(
@@ -50,6 +54,18 @@ BASELINE_NAMES = (
     BASELINE_FIXED_LR,
     BASELINE_NO_SELF_REFERENCE,
 )
+
+VECTOR_CONDITION_NAMES = (
+    "cma_es_cma_es",
+    "sep_cma_es_sep_cma_es",
+    "open_es_open_es",
+    "simple_ga_simple_ga",
+    "samr_ga_samr_ga",
+    "gesmr_ga_gesmr_ga",
+    "pgpe_pgpe",
+)
+
+ALL_CONDITION_NAMES = BASELINE_NAMES + VECTOR_CONDITION_NAMES
 
 VELOCITY_KEY_PAIRS = (
     ("x_velocity", "y_velocity"),
@@ -105,12 +121,44 @@ class SRGHNMetaState:
         return cls(pop=pop, key=key, pop_fitness=pop_fitness, best_fitness=best_fitness, best_indiv=best_indiv)
 
 
+@jax.tree_util.register_pytree_node_class
+@dataclass
+class VectorEvosaxMetaState:
+    key: jax.Array
+    population: jnp.ndarray
+    fitness: jnp.ndarray
+    strategy_state: Any
+    best_fitness: jnp.ndarray
+    best_solution: jnp.ndarray
+
+    def tree_flatten(self):
+        return (self.key, self.population, self.fitness, self.strategy_state, self.best_fitness, self.best_solution), None
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        del aux_data
+        key, population, fitness, strategy_state, best_fitness, best_solution = children
+        return cls(
+            key=key,
+            population=population,
+            fitness=fitness,
+            strategy_state=strategy_state,
+            best_fitness=best_fitness,
+            best_solution=best_solution,
+        )
+
+
 @dataclass(frozen=True)
 class ConditionSpec:
     name: str
-    baseline_name: str
+    search_object: str
+    outer_optimizer: str
+    inner_optimizer: str
+    baseline_name: str | None = None
     mutation_exclude_modules: tuple[str, ...] = ()
     fixed_mutation_lr: float | None = None
+    outer_evosax_algo: str | None = None
+    inner_evosax_algo: str | None = None
 
 
 def _safe_wandb_import():
@@ -273,16 +321,126 @@ def _history_to_host(history: dict[str, jnp.ndarray]) -> dict[str, Any]:
     return {key: jax.device_get(value) for key, value in history.items()}
 
 
+PRESET_CONDITIONS: dict[str, ConditionSpec] = {
+    BASELINE_FULL: ConditionSpec(
+        name=BASELINE_FULL,
+        search_object="srghn",
+        outer_optimizer="srghn_self",
+        inner_optimizer="srghn_self",
+        baseline_name=BASELINE_FULL,
+    ),
+    BASELINE_FROZEN_MUTATION: ConditionSpec(
+        name=BASELINE_FROZEN_MUTATION,
+        search_object="srghn",
+        outer_optimizer="srghn_self",
+        inner_optimizer="srghn_self",
+        baseline_name=BASELINE_FROZEN_MUTATION,
+    ),
+    BASELINE_FIXED_LR: ConditionSpec(
+        name=BASELINE_FIXED_LR,
+        search_object="srghn",
+        outer_optimizer="srghn_self",
+        inner_optimizer="srghn_self",
+        baseline_name=BASELINE_FIXED_LR,
+    ),
+    BASELINE_NO_SELF_REFERENCE: ConditionSpec(
+        name=BASELINE_NO_SELF_REFERENCE,
+        search_object="srghn",
+        outer_optimizer="srghn_self",
+        inner_optimizer="srghn_self",
+        baseline_name=BASELINE_NO_SELF_REFERENCE,
+    ),
+    "cma_es_cma_es": ConditionSpec(
+        name="cma_es_cma_es",
+        search_object="vector",
+        outer_optimizer="evosax",
+        inner_optimizer="evosax",
+        outer_evosax_algo="CMA_ES",
+        inner_evosax_algo="CMA_ES",
+    ),
+    "sep_cma_es_sep_cma_es": ConditionSpec(
+        name="sep_cma_es_sep_cma_es",
+        search_object="vector",
+        outer_optimizer="evosax",
+        inner_optimizer="evosax",
+        outer_evosax_algo="Sep_CMA_ES",
+        inner_evosax_algo="Sep_CMA_ES",
+    ),
+    "open_es_open_es": ConditionSpec(
+        name="open_es_open_es",
+        search_object="vector",
+        outer_optimizer="evosax",
+        inner_optimizer="evosax",
+        outer_evosax_algo="Open_ES",
+        inner_evosax_algo="Open_ES",
+    ),
+    "simple_ga_simple_ga": ConditionSpec(
+        name="simple_ga_simple_ga",
+        search_object="vector",
+        outer_optimizer="evosax",
+        inner_optimizer="evosax",
+        outer_evosax_algo="SimpleGA",
+        inner_evosax_algo="SimpleGA",
+    ),
+    "samr_ga_samr_ga": ConditionSpec(
+        name="samr_ga_samr_ga",
+        search_object="vector",
+        outer_optimizer="evosax",
+        inner_optimizer="evosax",
+        outer_evosax_algo="SAMR_GA",
+        inner_evosax_algo="SAMR_GA",
+    ),
+    "gesmr_ga_gesmr_ga": ConditionSpec(
+        name="gesmr_ga_gesmr_ga",
+        search_object="vector",
+        outer_optimizer="evosax",
+        inner_optimizer="evosax",
+        outer_evosax_algo="GESMR_GA",
+        inner_evosax_algo="GESMR_GA",
+    ),
+    "pgpe_pgpe": ConditionSpec(
+        name="pgpe_pgpe",
+        search_object="vector",
+        outer_optimizer="evosax",
+        inner_optimizer="evosax",
+        outer_evosax_algo="PGPE",
+        inner_evosax_algo="PGPE",
+    ),
+}
+
+
+def validate_condition(cond: ConditionSpec) -> ConditionSpec:
+    if cond.search_object not in ("srghn", "vector"):
+        raise ValueError(f"Unsupported search_object '{cond.search_object}' for {cond.name}.")
+    if cond.outer_optimizer not in ("srghn_self", "evosax"):
+        raise ValueError(f"Unsupported outer optimizer '{cond.outer_optimizer}' for {cond.name}.")
+    if cond.inner_optimizer not in ("srghn_self", "evosax"):
+        raise ValueError(f"Unsupported inner optimizer '{cond.inner_optimizer}' for {cond.name}.")
+    if cond.search_object == "srghn":
+        if cond.outer_optimizer != "srghn_self" or cond.inner_optimizer != "srghn_self":
+            raise ValueError(f"SR-GHN conditions currently support only srghn_self inner/outer search: {cond.name}")
+        overrides = baseline_overrides(cond.baseline_name or BASELINE_FULL, fixed_mutation_lr=cond.fixed_mutation_lr or 0.02)
+        return ConditionSpec(
+            **{
+                **asdict(cond),
+                "mutation_exclude_modules": tuple(overrides["mutation_exclude_modules"]),
+                "fixed_mutation_lr": overrides["fixed_mutation_lr"],
+            }
+        )
+    if cond.outer_optimizer == "evosax" and not cond.outer_evosax_algo:
+        raise ValueError(f"Vector evosax outer loop needs outer_evosax_algo: {cond.name}")
+    if cond.inner_optimizer == "evosax" and not cond.inner_evosax_algo:
+        raise ValueError(f"Vector evosax inner loop needs inner_evosax_algo: {cond.name}")
+    return cond
+
+
 def parse_condition_spec(text: str, *, fixed_mutation_lr: float = 0.02) -> ConditionSpec:
-    if text not in BASELINE_NAMES:
-        raise ValueError(f"Unknown meta-Brax condition '{text}'. Expected one of {BASELINE_NAMES}.")
-    overrides = baseline_overrides(text, fixed_mutation_lr=fixed_mutation_lr)
-    return ConditionSpec(
-        name=text,
-        baseline_name=text,
-        mutation_exclude_modules=tuple(overrides["mutation_exclude_modules"]),
-        fixed_mutation_lr=overrides["fixed_mutation_lr"],
-    )
+    if text not in PRESET_CONDITIONS:
+        raise ValueError(f"Unknown meta-Brax condition '{text}'. Expected one of {ALL_CONDITION_NAMES}.")
+    cond = PRESET_CONDITIONS[text]
+    if cond.search_object == "srghn" and cond.baseline_name == BASELINE_FIXED_LR:
+        cond = ConditionSpec(**{**asdict(cond), "fixed_mutation_lr": fixed_mutation_lr})
+    return validate_condition(cond)
 
 
 def make_runtime_config(cfg: MetaBraxConfig):
@@ -494,6 +652,223 @@ def evaluate_individual_on_heading(
     cfg: MetaBraxConfig,
 ) -> jnp.ndarray:
     return evaluate_policy_params_on_heading(make_policy(indiv), episode_keys, heading, cfg)
+
+
+def evaluate_policy_vector_on_heading(
+    policy_vector: jnp.ndarray,
+    episode_keys: jax.Array,
+    heading: jnp.ndarray,
+    cfg: MetaBraxConfig,
+    policy_spec,
+) -> jnp.ndarray:
+    params = unflatten_policy_vector(policy_vector, policy_spec)
+    return evaluate_policy_params_on_heading(params, episode_keys, heading, cfg)
+
+
+def make_evosax_adapter(pop_size: int, algo_name: str, sigma_init: float | None, num_dims: int) -> EvosaxStrategyAdapter:
+    cfg = SimpleNamespace(pop_size=pop_size, evosax_algo=algo_name, evosax_sigma_init=sigma_init)
+    return EvosaxStrategyAdapter(cfg, solution=jnp.zeros((num_dims,), dtype=jnp.float32))
+
+
+def _sigma_from_adapter(adapter: EvosaxStrategyAdapter, fallback: float = 1.0) -> float:
+    params = getattr(adapter, "params", None)
+    for field_name in ("sigma_init", "init_std", "std_init", "sigma"):
+        if params is not None and hasattr(params, field_name):
+            try:
+                return float(jax.device_get(getattr(params, field_name)))
+            except Exception:
+                continue
+    return fallback
+
+
+@jax.tree_util.register_pytree_node_class
+@dataclass
+class LocalEvosaxState:
+    strategy_state: Any
+    population: jnp.ndarray
+    fitness: jnp.ndarray
+    best_solution: jnp.ndarray
+    best_fitness: jnp.ndarray
+    needs_initial_shift: jnp.ndarray
+    initial_center: jnp.ndarray
+    key: jax.Array
+
+    def tree_flatten(self):
+        return (
+            self.strategy_state,
+            self.population,
+            self.fitness,
+            self.best_solution,
+            self.best_fitness,
+            self.needs_initial_shift,
+            self.initial_center,
+            self.key,
+        ), None
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        del aux_data
+        (
+            strategy_state,
+            population,
+            fitness,
+            best_solution,
+            best_fitness,
+            needs_initial_shift,
+            initial_center,
+            key,
+        ) = children
+        return cls(
+            strategy_state=strategy_state,
+            population=population,
+            fitness=fitness,
+            best_solution=best_solution,
+            best_fitness=best_fitness,
+            needs_initial_shift=needs_initial_shift,
+            initial_center=initial_center,
+            key=key,
+        )
+
+
+def vector_support_fitness(
+    policy_vector: jnp.ndarray,
+    episode_keys: jax.Array,
+    heading: jnp.ndarray,
+    cfg: MetaBraxConfig,
+    policy_spec,
+) -> jnp.ndarray:
+    return evaluate_policy_vector_on_heading(policy_vector, episode_keys, heading, cfg, policy_spec)
+
+
+def init_local_evosax_state(
+    center: jnp.ndarray,
+    key: jax.Array,
+    adapter: EvosaxStrategyAdapter,
+    fitness_fn,
+) -> LocalEvosaxState:
+    key_init, key_boot = jax.random.split(key)
+    center = jnp.asarray(center, dtype=jnp.float32)
+    pop_size = adapter.pop_size
+    initial_population = jnp.tile(center[None, :], (pop_size, 1))
+    initial_fitness = jax.vmap(fitness_fn)(initial_population)
+
+    if adapter.init_signature == ("key", "mean", "params"):
+        strategy_state = adapter.strategy.init(key_init, center, adapter.params)
+        needs_initial_shift = jnp.asarray(False)
+        population = initial_population
+        fitness = initial_fitness
+    elif adapter.init_signature == ("key", "params"):
+        strategy_state = adapter.strategy.init(key_init, adapter.params)
+        needs_initial_shift = jnp.asarray(True)
+        population = initial_population
+        fitness = initial_fitness
+    elif adapter.init_signature == ("key", "population", "fitness", "params"):
+        sigma = jnp.asarray(_sigma_from_adapter(adapter, fallback=1.0), dtype=jnp.float32)
+        bootstrap = center[None, :] + sigma * jax.random.normal(key_boot, (pop_size, center.shape[0]), dtype=jnp.float32)
+        bootstrap_fitness = jax.vmap(fitness_fn)(bootstrap)
+        strategy_state = adapter.init(key_init, bootstrap, bootstrap_fitness)
+        needs_initial_shift = jnp.asarray(False)
+        population = bootstrap
+        fitness = bootstrap_fitness
+    else:
+        raise TypeError(f"Unsupported evosax init signature for local adaptation: {adapter.init_signature}")
+
+    best_idx = jnp.argmax(fitness)
+    return LocalEvosaxState(
+        strategy_state=strategy_state,
+        population=population,
+        fitness=fitness,
+        best_solution=population[best_idx],
+        best_fitness=fitness[best_idx],
+        needs_initial_shift=needs_initial_shift,
+        initial_center=center,
+        key=key,
+    )
+
+
+def local_evosax_generation(state: LocalEvosaxState, adapter: EvosaxStrategyAdapter, fitness_fn) -> LocalEvosaxState:
+    key_ask, key_tell, key_next = jax.random.split(state.key, 3)
+    raw_population, ask_state = adapter.ask(key_ask, state.strategy_state)
+    population = jax.lax.cond(
+        state.needs_initial_shift,
+        lambda _: raw_population + state.initial_center[None, :],
+        lambda _: raw_population,
+        operand=None,
+    )
+    fitness = jax.vmap(fitness_fn)(population)
+    next_strategy_state = adapter.tell(key_tell, population, fitness, ask_state)
+    best_idx = jnp.argmax(fitness)
+    best_solution = population[best_idx]
+    best_fitness = fitness[best_idx]
+    improved = best_fitness > state.best_fitness
+    running_best_solution = jax.lax.cond(
+        improved,
+        lambda _: best_solution,
+        lambda _: state.best_solution,
+        operand=None,
+    )
+    running_best_fitness = jnp.maximum(state.best_fitness, best_fitness)
+    return LocalEvosaxState(
+        strategy_state=next_strategy_state,
+        population=population,
+        fitness=fitness,
+        best_solution=running_best_solution,
+        best_fitness=running_best_fitness,
+        needs_initial_shift=jnp.asarray(False),
+        initial_center=state.initial_center,
+        key=key_next,
+    )
+
+
+def vector_evosax_adapt(
+    center: jnp.ndarray,
+    key: jax.Array,
+    support_keys: jax.Array,
+    heading: jnp.ndarray,
+    cfg: MetaBraxConfig,
+    policy_spec,
+    adapter: EvosaxStrategyAdapter,
+) -> jnp.ndarray:
+    fitness_fn = partial(vector_support_fitness, episode_keys=support_keys, heading=heading, cfg=cfg, policy_spec=policy_spec)
+    init_state = init_local_evosax_state(center, key, adapter, fitness_fn)
+
+    def step_fn(state, _):
+        next_state = local_evosax_generation(state, adapter, fitness_fn)
+        return next_state, next_state.best_solution
+
+    if cfg.inner_generations <= 0:
+        return init_state.best_solution
+
+    _, best_seq = jax.lax.scan(step_fn, init_state, None, length=cfg.inner_generations)
+    return best_seq[-1]
+
+
+def vector_evosax_task_curve(
+    center: jnp.ndarray,
+    key: jax.Array,
+    heading: jnp.ndarray,
+    cfg: MetaBraxConfig,
+    cond: ConditionSpec,
+    policy_spec,
+    adapter: EvosaxStrategyAdapter,
+) -> jnp.ndarray:
+    del cond
+    key_adapt, key_episode = jax.random.split(key)
+    support_keys, query_keys = split_support_query_episode_keys(key_episode, cfg.support_episodes, cfg.query_episodes)
+    fitness_fn = partial(vector_support_fitness, episode_keys=support_keys, heading=heading, cfg=cfg, policy_spec=policy_spec)
+    init_state = init_local_evosax_state(center, key_adapt, adapter, fitness_fn)
+    initial_return = evaluate_policy_vector_on_heading(init_state.best_solution, query_keys, heading, cfg, policy_spec)
+
+    def step_fn(state, _):
+        next_state = local_evosax_generation(state, adapter, fitness_fn)
+        query_return = evaluate_policy_vector_on_heading(next_state.best_solution, query_keys, heading, cfg, policy_spec)
+        return next_state, query_return
+
+    if cfg.inner_generations <= 0:
+        return initial_return[None]
+
+    _, query_returns = jax.lax.scan(step_fn, init_state, None, length=cfg.inner_generations)
+    return jnp.concatenate([initial_return[None], query_returns], axis=0)
 
 
 def _heading_label(heading: jnp.ndarray) -> str:
@@ -1154,6 +1529,26 @@ def srghn_meta_fitness(
     return jnp.mean(jax.vmap(per_task)(tasks.headings, task_keys))
 
 
+def vector_meta_fitness(
+    center: jnp.ndarray,
+    key: jax.Array,
+    tasks: BraxHeadingTaskBatch,
+    cfg: MetaBraxConfig,
+    cond: ConditionSpec,
+    policy_spec,
+    inner_adapter: EvosaxStrategyAdapter,
+) -> jnp.ndarray:
+    task_keys = jax.random.split(key, tasks.headings.shape[0])
+
+    def per_task(heading, task_key):
+        key_adapt, key_episode = jax.random.split(task_key)
+        support_keys, query_keys = split_support_query_episode_keys(key_episode, cfg.support_episodes, cfg.query_episodes)
+        adapted = vector_evosax_adapt(center, key_adapt, support_keys, heading, cfg, policy_spec, inner_adapter)
+        return evaluate_policy_vector_on_heading(adapted, query_keys, heading, cfg, policy_spec)
+
+    return jnp.mean(jax.vmap(per_task)(tasks.headings, task_keys))
+
+
 def srghn_outer_step(state: SRGHNMetaState, gen: jnp.ndarray, cfg: MetaBraxConfig, cond: ConditionSpec):
     key_next, key_tasks, key_eval, key_evolve = jax.random.split(state.key, 4)
     tasks = sample_heading_tasks(key_tasks, cfg.meta_batch_size)
@@ -1218,6 +1613,82 @@ def srghn_outer_step(state: SRGHNMetaState, gen: jnp.ndarray, cfg: MetaBraxConfi
     ), metrics
 
 
+def init_outer_evosax_state(key: jax.Array, cfg: MetaBraxConfig, adapter: EvosaxStrategyAdapter, policy_spec) -> VectorEvosaxMetaState:
+    key_init, key_boot, key_state = jax.random.split(key, 3)
+    zero = zero_policy_vector(policy_spec)
+    pop_size = adapter.pop_size
+
+    if adapter.init_signature == ("key", "mean", "params"):
+        strategy_state = adapter.strategy.init(key_init, zero, adapter.params)
+        population = jnp.tile(zero[None, :], (pop_size, 1))
+        fitness = -jnp.inf * jnp.ones((pop_size,), dtype=jnp.float32)
+    elif adapter.init_signature == ("key", "params"):
+        strategy_state = adapter.strategy.init(key_init, adapter.params)
+        population = jnp.tile(zero[None, :], (pop_size, 1))
+        fitness = -jnp.inf * jnp.ones((pop_size,), dtype=jnp.float32)
+    elif adapter.init_signature == ("key", "population", "fitness", "params"):
+        sigma = jnp.asarray(_sigma_from_adapter(adapter, fallback=1.0), dtype=jnp.float32)
+        population = zero[None, :] + sigma * jax.random.normal(key_boot, (pop_size, zero.shape[0]), dtype=jnp.float32)
+        boot_fitness = jnp.zeros((pop_size,), dtype=jnp.float32)
+        strategy_state = adapter.init(key_init, population, boot_fitness)
+        fitness = -jnp.inf * jnp.ones((pop_size,), dtype=jnp.float32)
+    else:
+        raise TypeError(f"Unsupported evosax outer init signature: {adapter.init_signature}")
+
+    return VectorEvosaxMetaState(
+        key=key_state,
+        population=population,
+        fitness=fitness,
+        strategy_state=strategy_state,
+        best_fitness=jnp.asarray(-jnp.inf, dtype=jnp.float32),
+        best_solution=zero,
+    )
+
+
+def vector_evosax_outer_step(
+    state: VectorEvosaxMetaState,
+    gen: jnp.ndarray,
+    cfg: MetaBraxConfig,
+    cond: ConditionSpec,
+    policy_spec,
+    inner_adapter: EvosaxStrategyAdapter,
+    outer_adapter: EvosaxStrategyAdapter,
+):
+    key_tasks, key_ask, key_eval, key_tell, key_next = jax.random.split(state.key, 5)
+    tasks = sample_heading_tasks(key_tasks, cfg.meta_batch_size)
+
+    population, ask_state = outer_adapter.ask(key_ask, state.strategy_state)
+    eval_keys = jax.random.split(key_eval, population.shape[0])
+
+    def fitness_fn(vec: jnp.ndarray, eval_key: jax.Array) -> jnp.ndarray:
+        return vector_meta_fitness(vec, eval_key, tasks, cfg, cond, policy_spec, inner_adapter)
+
+    fitness = jax.vmap(fitness_fn)(population, eval_keys)
+    next_strategy_state = outer_adapter.tell(key_tell, population, fitness, ask_state)
+
+    metrics = compute_vector_metrics(population, fitness)
+    metrics["query_return_best"] = metrics["fitness_best"]
+    metrics["query_return_mean"] = metrics["fitness_mean"]
+    metrics["query_return_best_so_far"] = jnp.maximum(state.best_fitness, jnp.max(fitness))
+    jax.debug.callback(partial(_wandb_log_metrics, prefix="train"), metrics, gen)
+
+    gen_best_idx = jnp.argmax(fitness)
+    gen_best_solution = population[gen_best_idx]
+    gen_best_fitness = fitness[gen_best_idx]
+    improved = gen_best_fitness > state.best_fitness
+    best_solution = jax.lax.cond(improved, lambda _: gen_best_solution, lambda _: state.best_solution, operand=None)
+    best_fitness = jnp.maximum(state.best_fitness, gen_best_fitness)
+
+    return VectorEvosaxMetaState(
+        key=key_next,
+        population=population,
+        fitness=fitness,
+        strategy_state=next_strategy_state,
+        best_fitness=best_fitness,
+        best_solution=best_solution,
+    ), metrics
+
+
 @partial(jax.jit, static_argnums=(0, 1))
 def run_srghn_compiled(cfg: MetaBraxConfig, cond: ConditionSpec, key: jax.Array):
     runtime_config = make_runtime_config(cfg)
@@ -1250,7 +1721,86 @@ def run_srghn_compiled(cfg: MetaBraxConfig, cond: ConditionSpec, key: jax.Array)
     return final_state, history, curves
 
 
+def run_vector_condition(cfg: MetaBraxConfig, cond: ConditionSpec) -> dict[str, Any]:
+    runtime_config = make_runtime_config(cfg)
+    _, specs = build_graphs_and_specs(runtime_config)
+    policy_spec = specs.policy_spec
+    num_dims = policy_num_dims(policy_spec)
+    inner_adapter = make_evosax_adapter(
+        cfg.inner_pop_size,
+        cond.inner_evosax_algo or "",
+        getattr(cfg, "inner_evosax_sigma_init", 0.05),
+        num_dims,
+    )
+    outer_adapter = make_evosax_adapter(
+        cfg.outer_pop_size,
+        cond.outer_evosax_algo or "",
+        getattr(cfg, "outer_evosax_sigma_init", 0.05),
+        num_dims,
+    )
+
+    _wandb_init_run(cfg, cond, policy_spec=policy_spec)
+
+    init_key = jax.random.PRNGKey(cfg.seed)
+    _, key_loop = jax.random.split(init_key)
+    init_state = init_outer_evosax_state(key_loop, cfg, outer_adapter, policy_spec)
+
+    @partial(jax.jit, static_argnums=(0, 1))
+    def run_impl(cfg: MetaBraxConfig, cond: ConditionSpec, state: VectorEvosaxMetaState):
+        gens = jnp.arange(cfg.outer_generations, dtype=jnp.int32)
+        return jax.lax.scan(
+            lambda carry, gen: vector_evosax_outer_step(carry, gen, cfg, cond, policy_spec, inner_adapter, outer_adapter),
+            state,
+            gens,
+        )
+
+    t0 = time.perf_counter()
+    final_state, history = run_impl(cfg, cond, init_state)
+    jax.block_until_ready(history["fitness_best"])
+    train_seconds = time.perf_counter() - t0
+
+    heldout_tasks = sample_heldout_heading_tasks(jax.random.PRNGKey(cfg.seed + 10_000), cfg.heldout_task_batch_size)
+    heldout_keys = jax.random.split(jax.random.PRNGKey(cfg.seed + 20_000), cfg.heldout_task_batch_size)
+
+    @partial(jax.jit, static_argnums=(0, 1))
+    def eval_curves(cfg: MetaBraxConfig, cond: ConditionSpec):
+        return jax.vmap(
+            lambda heading, task_key: vector_evosax_task_curve(
+                final_state.best_solution, task_key, heading, cfg, cond, policy_spec, inner_adapter
+            )
+        )(heldout_tasks.headings, heldout_keys)
+
+    curves = eval_curves(cfg, cond)
+    jax.block_until_ready(curves)
+
+    summary_payload = {
+        "train_history": _history_to_host(history),
+        "adaptation_curve_query_return": _summary_from_curves(curves),
+        "final_population_fitness": jax.device_get(final_state.fitness),
+        "champion_meta_fitness": float(jax.device_get(final_state.best_fitness)),
+    }
+    _wandb_log_summary(cfg, cond, summary_payload)
+    _wandb_finish_run()
+
+    return {
+        "kind": "vector",
+        "condition": asdict(cond),
+        "config": asdict(cfg),
+        "policy_spec_shapes": [tuple(shape) for shape in policy_spec.shapes],
+        "policy_num_dims": int(num_dims),
+        "train_history": _history_to_host(history),
+        "adaptation_curve_query_return": _summary_from_curves(curves),
+        "final_population_fitness": jax.device_get(final_state.fitness),
+        "champion_meta_fitness": float(jax.device_get(final_state.best_fitness)),
+        "champion": jax.device_get(final_state.best_solution),
+        "train_seconds": train_seconds,
+        "eval_seconds": 0.0,
+    }
+
+
 def run_condition(cfg: MetaBraxConfig, cond: ConditionSpec) -> dict[str, Any]:
+    if cond.search_object == "vector":
+        return run_vector_condition(cfg, cond)
     runtime_config = make_runtime_config(cfg)
     graphs, specs = build_graphs_and_specs(runtime_config)
     del graphs
@@ -1380,6 +1930,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mutation-rate-head-dim", type=int, default=None)
     parser.add_argument("--const-noise-std", type=float, default=None)
     parser.add_argument("--fixed-mutation-lr", type=float, default=None)
+    parser.add_argument("--outer-evosax-sigma-init", type=float, default=None)
+    parser.add_argument("--inner-evosax-sigma-init", type=float, default=None)
     parser.add_argument("--no-wandb", action="store_true")
     parser.add_argument("--wandb-project", default=None)
     parser.add_argument("--wandb-group", default=None)
@@ -1421,6 +1973,8 @@ def make_base_cfg(args: argparse.Namespace) -> MetaBraxConfig:
             "mutation_rate_head_dim": args.mutation_rate_head_dim,
             "const_noise_std": args.const_noise_std,
             "baseline_fixed_mutation_lr": args.fixed_mutation_lr,
+            "outer_evosax_sigma_init": args.outer_evosax_sigma_init,
+            "inner_evosax_sigma_init": args.inner_evosax_sigma_init,
             "wandb_project": None if args.no_wandb else args.wandb_project,
             "wandb_group": args.wandb_group,
             "wandb_name": args.wandb_name,

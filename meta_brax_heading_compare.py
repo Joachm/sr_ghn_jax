@@ -11,6 +11,7 @@ import jax.numpy as jnp
 
 from experiment_configs import print_resolved_config, resolved_config_payload
 from meta_brax_heading import (
+    ALL_CONDITION_NAMES,
     BASELINE_NAMES,
     MetaBraxConfig,
     make_base_cfg,
@@ -56,7 +57,7 @@ def aggregate_results(results: list[dict[str, object]]) -> dict[str, object]:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run a multi-seed SR-GHN comparison for the meta-Brax heading task.")
+    parser = argparse.ArgumentParser(description="Run a multi-seed comparison for the meta-Brax heading task.")
     parser.add_argument("--conditions", nargs="+", default=BASELINE_NAMES)
     parser.add_argument("--seeds", nargs="*", type=int, default=None)
     parser.add_argument("--output", default="meta_brax_heading_compare.pkl")
@@ -66,7 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--env-id", default="ant")
     parser.add_argument("--backend", default="spring")
     parser.add_argument("--outer-generations", type=int, default=200)
-    parser.add_argument("--meta-batch-size", type=int, default=4)
+    parser.add_argument("--meta-batch-size", type=int, default=10)
     parser.add_argument("--heldout-task-batch-size", type=int, default=16)
     parser.add_argument("--outer-pop-size", type=int, default=16)
     parser.add_argument("--outer-children-per-parent", type=int, default=1)
@@ -87,6 +88,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mutation-rate-head-dim", type=int, default=5)
     parser.add_argument("--const-noise-std", type=float, default=1e-3)
     parser.add_argument("--fixed-mutation-lr", type=float, default=0.02)
+    parser.add_argument("--outer-evosax-sigma-init", type=float, default=0.05)
+    parser.add_argument("--inner-evosax-sigma-init", type=float, default=0.05)
     parser.add_argument("--no-wandb", action="store_true")
     parser.add_argument("--wandb-project", default=None)
     parser.add_argument("--wandb-group", default=None)

@@ -194,7 +194,7 @@ class MetaBraxHeadingTests(unittest.TestCase):
         self.assertGreaterEqual(len(trajectory), 2)
         self.assertTrue(np.isfinite(total_reward))
 
-    def test_meta_fitness_uses_worst_task_return(self):
+    def test_meta_fitness_uses_mean_task_return(self):
         cfg = mb.MetaBraxConfig(
             meta_batch_size=8,
             support_episodes=1,
@@ -211,14 +211,15 @@ class MetaBraxHeadingTests(unittest.TestCase):
 
         def fake_eval(indiv, episode_keys, heading, cfg):
             del episode_keys, cfg
-            table = {
-                (1.0, 0.0): 7.0,
-                (-1.0, 0.0): 3.0,
-                (0.0, 1.0): 5.0,
-                (0.0, -1.0): 9.0,
-            }
-            key = tuple(np.asarray(heading).tolist())
-            return jnp.asarray(table[key], dtype=jnp.float32)
+            return jnp.where(
+                heading[0] > 0.5,
+                7.0,
+                jnp.where(
+                    heading[0] < -0.5,
+                    3.0,
+                    jnp.where(heading[1] > 0.5, 5.0, 9.0),
+                ),
+            ).astype(jnp.float32)
 
         with (
             mock.patch.object(mb, "srghn_adapt", side_effect=fake_adapt),
@@ -227,6 +228,23 @@ class MetaBraxHeadingTests(unittest.TestCase):
             fitness = mb.srghn_meta_fitness(object(), jax.random.PRNGKey(0), tasks, cfg, cond)
 
         self.assertAlmostEqual(float(fitness), 6.0, places=5)
+
+    def test_vector_condition_mapping_matches_sine_style_presets(self):
+        cond = mb.parse_condition_spec("open_es_open_es", fixed_mutation_lr=0.02)
+        self.assertEqual(cond.search_object, "vector")
+        self.assertEqual(cond.outer_optimizer, "evosax")
+        self.assertEqual(cond.inner_optimizer, "evosax")
+        self.assertEqual(cond.outer_evosax_algo, "Open_ES")
+        self.assertEqual(cond.inner_evosax_algo, "Open_ES")
+
+    def test_run_condition_dispatches_vector_conditions(self):
+        cfg = mb.MetaBraxConfig(wandb_project=None)
+        cond = mb.parse_condition_spec("pgpe_pgpe", fixed_mutation_lr=cfg.baseline_fixed_mutation_lr)
+        sentinel = {"kind": "vector"}
+        with mock.patch.object(mb, "run_vector_condition", return_value=sentinel) as mocked:
+            result = mb.run_condition(cfg, cond)
+        mocked.assert_called_once_with(cfg, cond)
+        self.assertIs(result, sentinel)
 
     def test_baseline_condition_mapping_matches_existing_overrides(self):
         full = mb.parse_condition_spec(BASELINE_FULL, fixed_mutation_lr=0.02)
