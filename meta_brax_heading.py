@@ -665,8 +665,19 @@ def evaluate_policy_vector_on_heading(
     return evaluate_policy_params_on_heading(params, episode_keys, heading, cfg)
 
 
-def make_evosax_adapter(pop_size: int, algo_name: str, sigma_init: float | None, num_dims: int) -> EvosaxStrategyAdapter:
-    cfg = SimpleNamespace(pop_size=pop_size, evosax_algo=algo_name, evosax_sigma_init=sigma_init)
+def make_evosax_adapter(
+    pop_size: int,
+    algo_name: str,
+    sigma_init: float | None,
+    std_decay: float | None,
+    num_dims: int,
+) -> EvosaxStrategyAdapter:
+    cfg = SimpleNamespace(
+        pop_size=pop_size,
+        evosax_algo=algo_name,
+        evosax_sigma_init=sigma_init,
+        evosax_std_decay=std_decay,
+    )
     return EvosaxStrategyAdapter(cfg, solution=jnp.zeros((num_dims,), dtype=jnp.float32))
 
 
@@ -1730,12 +1741,14 @@ def run_vector_condition(cfg: MetaBraxConfig, cond: ConditionSpec) -> dict[str, 
         cfg.inner_pop_size,
         cond.inner_evosax_algo or "",
         getattr(cfg, "inner_evosax_sigma_init", 0.05),
+        getattr(cfg, "inner_evosax_std_decay", 1.0),
         num_dims,
     )
     outer_adapter = make_evosax_adapter(
         cfg.outer_pop_size,
         cond.outer_evosax_algo or "",
         getattr(cfg, "outer_evosax_sigma_init", 0.05),
+        getattr(cfg, "outer_evosax_std_decay", 1.0),
         num_dims,
     )
 
@@ -1932,6 +1945,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fixed-mutation-lr", type=float, default=None)
     parser.add_argument("--outer-evosax-sigma-init", type=float, default=None)
     parser.add_argument("--inner-evosax-sigma-init", type=float, default=None)
+    parser.add_argument("--outer-evosax-std-decay", type=float, default=None)
+    parser.add_argument("--inner-evosax-std-decay", type=float, default=None)
     parser.add_argument("--no-wandb", action="store_true")
     parser.add_argument("--wandb-project", default=None)
     parser.add_argument("--wandb-group", default=None)
@@ -1975,6 +1990,8 @@ def make_base_cfg(args: argparse.Namespace) -> MetaBraxConfig:
             "baseline_fixed_mutation_lr": args.fixed_mutation_lr,
             "outer_evosax_sigma_init": args.outer_evosax_sigma_init,
             "inner_evosax_sigma_init": args.inner_evosax_sigma_init,
+            "outer_evosax_std_decay": args.outer_evosax_std_decay,
+            "inner_evosax_std_decay": args.inner_evosax_std_decay,
             "wandb_project": None if args.no_wandb else args.wandb_project,
             "wandb_group": args.wandb_group,
             "wandb_name": args.wandb_name,

@@ -9,6 +9,7 @@ import re
 
 import jax
 import jax.numpy as jnp
+import optax
 
 
 def fitness_for_evosax(raw_fitness: jnp.ndarray) -> jnp.ndarray:
@@ -88,12 +89,40 @@ def _snake_case_name(name: str) -> str:
     return snake.replace("__", "_")
 
 
-def _instantiate_strategy(strategy_cls, *, pop_size: int, solution: jnp.ndarray):
-    constructor_attempts = (
-        {"population_size": pop_size, "solution": solution},
-        {"popsize": pop_size, "solution": solution},
-        {"population_size": pop_size, "num_dims": int(solution.shape[0])},
-        {"popsize": pop_size, "num_dims": int(solution.shape[0])},
+def _make_std_schedule(config):
+    sigma_init = getattr(config, "evosax_sigma_init", None)
+    std_decay = getattr(config, "evosax_std_decay", None)
+    if sigma_init is None and std_decay is None:
+        return None
+    init_value = float(1.0 if sigma_init is None else sigma_init)
+    decay_rate = float(1.0 if std_decay is None else std_decay)
+    return optax.exponential_decay(
+        init_value=init_value,
+        transition_steps=1,
+        decay_rate=decay_rate,
+        staircase=False,
+        end_value=0.0,
+    )
+
+
+def _instantiate_strategy(strategy_cls, *, pop_size: int, solution: jnp.ndarray, std_schedule=None):
+    constructor_attempts = []
+    if std_schedule is not None:
+        constructor_attempts.extend(
+            (
+                {"population_size": pop_size, "solution": solution, "std_schedule": std_schedule},
+                {"popsize": pop_size, "solution": solution, "std_schedule": std_schedule},
+                {"population_size": pop_size, "num_dims": int(solution.shape[0]), "std_schedule": std_schedule},
+                {"popsize": pop_size, "num_dims": int(solution.shape[0]), "std_schedule": std_schedule},
+            )
+        )
+    constructor_attempts.extend(
+        (
+            {"population_size": pop_size, "solution": solution},
+            {"popsize": pop_size, "solution": solution},
+            {"population_size": pop_size, "num_dims": int(solution.shape[0])},
+            {"popsize": pop_size, "num_dims": int(solution.shape[0])},
+        )
     )
     for kwargs in constructor_attempts:
         try:
@@ -165,7 +194,12 @@ class EvosaxStrategyAdapter:
         self.solution = jnp.asarray(solution, dtype=jnp.float32)
         self.pop_size = int(config.pop_size)
         self.algo_name = config.evosax_algo
-        self.strategy = _instantiate_strategy(strategy_cls, pop_size=self.pop_size, solution=solution)
+        self.strategy = _instantiate_strategy(
+            strategy_cls,
+            pop_size=self.pop_size,
+            solution=solution,
+            std_schedule=_make_std_schedule(config),
+        )
         self.params = _override_strategy_params(getattr(self.strategy, "default_params", None), config.evosax_sigma_init)
         self._init_param_names = self._method_param_names("init", "initialize")
         self._ask_param_names = self._method_param_names("ask")

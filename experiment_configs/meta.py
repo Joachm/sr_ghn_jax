@@ -78,6 +78,8 @@ class MetaBraxConfig:
     baseline_fixed_mutation_lr: float = 0.02
     outer_evosax_sigma_init: float | None = 0.05
     inner_evosax_sigma_init: float | None = 0.05
+    outer_evosax_std_decay: float | None = 1.0
+    inner_evosax_std_decay: float | None = 1.0
     obs_norm_clip: float = 5.0
     obs_norm_eps: float = 1e-8
     wandb_project: str | None = "meta_brax_heading"
