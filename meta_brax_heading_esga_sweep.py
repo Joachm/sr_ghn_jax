@@ -26,6 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", default="meta_brax_heading_esga_sweep.pkl")
     parser.add_argument("--print-config", action="store_true")
     parser.add_argument("--fast", action="store_true")
+    parser.add_argument("--run-preset", default="default", choices=("default", "fast"))
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--env-id", default="ant")
     parser.add_argument("--backend", default="spring")
