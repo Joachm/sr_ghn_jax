@@ -51,8 +51,8 @@ class MetaBraxConfig:
     env_id: str = "ant"
     brax_backend: str | None = "spring"
     seed: int = 0
-    outer_generations: int = 10000
-    meta_batch_size: int = 10
+    outer_generations: int = 1500
+    meta_batch_size: int = 12
     heldout_task_batch_size: int = 16
     outer_pop_size: int = 16
     outer_children_per_parent: int = 2
