@@ -692,6 +692,17 @@ def _sigma_from_adapter(adapter: EvosaxStrategyAdapter, fallback: float = 1.0) -
     return fallback
 
 
+def _center_evosax_state(strategy_state, center: jnp.ndarray):
+    if not hasattr(strategy_state, "mean"):
+        return strategy_state, False
+    center = jnp.asarray(center, dtype=jnp.float32)
+    if hasattr(strategy_state, "replace") and callable(strategy_state.replace):
+        return strategy_state.replace(mean=center), True
+    if hasattr(strategy_state, "_replace") and callable(strategy_state._replace):
+        return strategy_state._replace(mean=center), True
+    return strategy_state, False
+
+
 @jax.tree_util.register_pytree_node_class
 @dataclass
 class LocalEvosaxState:
@@ -770,7 +781,8 @@ def init_local_evosax_state(
         fitness = initial_fitness
     elif adapter.init_signature == ("key", "params"):
         strategy_state = adapter.strategy.init(key_init, adapter.params)
-        needs_initial_shift = jnp.asarray(True)
+        strategy_state, centered = _center_evosax_state(strategy_state, center)
+        needs_initial_shift = jnp.asarray(not centered)
         population = initial_population
         fitness = initial_fitness
     elif adapter.init_signature == ("key", "population", "fitness", "params"):
@@ -1635,6 +1647,7 @@ def init_outer_evosax_state(key: jax.Array, cfg: MetaBraxConfig, adapter: Evosax
         fitness = -jnp.inf * jnp.ones((pop_size,), dtype=jnp.float32)
     elif adapter.init_signature == ("key", "params"):
         strategy_state = adapter.strategy.init(key_init, adapter.params)
+        strategy_state, _ = _center_evosax_state(strategy_state, zero)
         population = jnp.tile(zero[None, :], (pop_size, 1))
         fitness = -jnp.inf * jnp.ones((pop_size,), dtype=jnp.float32)
     elif adapter.init_signature == ("key", "population", "fitness", "params"):
