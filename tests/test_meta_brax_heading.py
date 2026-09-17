@@ -73,6 +73,76 @@ class MetaBraxHeadingTests(unittest.TestCase):
             11088,
         )
 
+    def test_native_elitist_outer_allocations_match_42_candidate_budget(self):
+        for pop_size, children_per_parent in ((14, 2), (21, 1)):
+            cfg = mb.MetaBraxConfig(
+                outer_pop_size=pop_size,
+                outer_children_per_parent=children_per_parent,
+                outer_replacement_mode="elitist_union",
+                inner_pop_size=2,
+                inner_children_per_parent=1,
+                inner_generations=4,
+                meta_batch_size=12,
+                support_episodes=2,
+                query_episodes=2,
+                wandb_project=None,
+            )
+            self.assertEqual(mb_compare.srghn_outer_candidate_evals(cfg), 42)
+            self.assertEqual(mb_compare.srghn_inner_support_candidate_evals(cfg), 10)
+            self.assertEqual(
+                mb_compare.environment_episodes_per_outer_generation(
+                    cfg, outer_candidate_evals=42, inner_candidate_evals=10
+                ),
+                11088,
+            )
+
+    def test_native_elitist_outer_step_evaluates_parents_and_children_for_both_allocations(self):
+        for pop_size, children_per_parent in ((14, 2), (21, 1)):
+            cfg = mb.MetaBraxConfig(
+                outer_pop_size=pop_size,
+                outer_children_per_parent=children_per_parent,
+                outer_replacement_mode="elitist_union",
+                meta_batch_size=1,
+                inner_pop_size=2,
+                inner_children_per_parent=1,
+                inner_generations=0,
+                support_episodes=1,
+                query_episodes=1,
+                wandb_project=None,
+            )
+            cond = mb.parse_condition_spec(BASELINE_FULL, fixed_mutation_lr=cfg.baseline_fixed_mutation_lr)
+            state = mb.SRGHNMetaState(
+                pop=jnp.arange(pop_size, dtype=jnp.float32),
+                key=jax.random.PRNGKey(0),
+                pop_fitness=jnp.zeros((pop_size,), dtype=jnp.float32),
+                best_fitness=jnp.asarray(-jnp.inf),
+                best_indiv=jnp.asarray(-1.0),
+            )
+            evaluations = []
+
+            def fake_meta_fitness(indiv, key, tasks, config, condition):
+                del key, tasks, config, condition
+                jax.debug.callback(lambda _: evaluations.append(1), indiv)
+                return indiv
+
+            def fake_mutation(indiv, key, **kwargs):
+                del key, kwargs
+                return indiv + 100.0, jnp.asarray(0.0)
+
+            tasks = mb.BraxHeadingTaskBatch(headings=jnp.zeros((1, 2), dtype=jnp.float32))
+            with (
+                mock.patch.object(mb, "sample_heading_tasks", return_value=tasks),
+                mock.patch.object(mb, "srghn_meta_fitness", side_effect=fake_meta_fitness),
+                mock.patch.object(mb, "mutation_metadata", return_value=jnp.asarray(0.0)),
+                mock.patch.object(mb, "mutate_with_metadata", side_effect=fake_mutation),
+                mock.patch.object(mb, "compute_experiment_metrics", side_effect=lambda pop, fitness, parent, elite: {"fitness_best": jnp.max(fitness), "fitness_mean": jnp.mean(fitness)}),
+            ):
+                next_state, _ = mb.srghn_outer_step(state, jnp.asarray(0, dtype=jnp.int32), cfg, cond)
+
+            self.assertEqual(len(evaluations), 42)
+            self.assertEqual(next_state.pop.shape, (pop_size,))
+            self.assertEqual(next_state.pop_fitness.shape, (pop_size,))
+
     def test_cached_elitist_outer_step_selects_reproducers_and_evaluates_only_children(self):
         cfg = mb.MetaBraxConfig(
             outer_pop_size=6,

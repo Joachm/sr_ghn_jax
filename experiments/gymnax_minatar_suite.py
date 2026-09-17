@@ -130,7 +130,7 @@ def main(argv: list[str] | None = None) -> int:
                 "num_generations": args.num_generations,
                 "pop_size": resolved_pop_size,
                 "children_per_parent": args.children_per_parent,
-                        "srghn_replacement_mode": args.srghn_replacement_mode,
+                "srghn_replacement_mode": args.srghn_replacement_mode,
                 "episodes_per_eval": args.episodes_per_eval,
                 "episode_horizon": args.episode_horizon,
                 "parameter_block_size": args.parameter_block_size,

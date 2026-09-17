@@ -473,6 +473,47 @@ class AdaptationTests(unittest.TestCase):
         np.testing.assert_array_equal(np.asarray(next_state.pop), np.asarray([103, 103, 104, 104, 105, 105], dtype=np.float32))
         self.assertEqual(next_state.pop_fitness.shape, (6,))
 
+    def test_native_elitist_evo_step_evaluates_25_parents_plus_175_children(self):
+        config = SimpleNamespace(
+            pop_size=25,
+            children_per_parent=7,
+            srghn_replacement_mode="elitist_union",
+            mutation_exclude_modules=(),
+            fixed_mutation_lr=None,
+            child_factor=0.0,
+            num_generations=1,
+            shift_windows=(),
+        )
+        state = EvoState(
+            pop=jnp.arange(25, dtype=jnp.float32),
+            key=jax.random.PRNGKey(0),
+            obs_norm=jnp.asarray(0.0),
+            pop_fitness=jnp.zeros((25,), dtype=jnp.float32),
+        )
+        evaluations = []
+
+        def fake_eval(indiv, key, gen, cfg, obs_norm):
+            del key, gen, cfg, obs_norm
+            jax.debug.callback(lambda _: evaluations.append(1), indiv)
+            return indiv, jnp.ones((1,)), jnp.ones((1,)), jnp.ones((1,))
+
+        def fake_mutation(indiv, key, **kwargs):
+            del key, kwargs
+            return indiv + 100.0, jnp.asarray(0.0)
+
+        with (
+            mock.patch.object(evolution_module, "evaluate_individual_with_obs_stats", side_effect=fake_eval),
+            mock.patch.object(evolution_module, "mutation_metadata", return_value=jnp.asarray(0.0)),
+            mock.patch.object(evolution_module, "mutate_with_metadata", side_effect=fake_mutation),
+            mock.patch.object(evolution_module, "compute_experiment_metrics", side_effect=lambda pop, fitness, parent, elite: {"fitness_mean": jnp.mean(fitness)}),
+            mock.patch.object(evolution_module, "update_obs_norm", side_effect=lambda current, *args: current),
+        ):
+            next_state, _ = evolution_module.evo_step(state, jnp.asarray(0, dtype=jnp.int32), config)
+
+        self.assertEqual(len(evaluations), 200)
+        self.assertEqual(next_state.pop.shape, (25,))
+        self.assertEqual(next_state.pop_fitness.shape, (25,))
+
     def test_cached_elitist_evo_step_handles_stationary_and_switch_generations(self):
         def make_config(shift_windows):
             return SimpleNamespace(

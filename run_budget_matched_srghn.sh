@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Historical cached-elites/generational budget-matched runs.
+# Native elitist_union pilots are in run_native_elitist_pilots.sh.
 set -euo pipefail
 
 cd "$(dirname "$0")"
