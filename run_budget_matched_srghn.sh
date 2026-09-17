@@ -8,7 +8,7 @@ python -m experiments.gymnax_minatar_suite \
     --optimizer-family srghn \
     --baseline srghn_full \
     --seeds 0 1 2 3 4 \
-    --children-per-parent 1 \
+    --children-per-parent 4 \
     --eval-budget-per-generation 200 \
     --output-dir results/gymnax_minatar_budget_matched
 
@@ -23,7 +23,14 @@ python meta_brax_heading_compare.py \
     --inner-pop-size 2 \
     --inner-generations 4 \
     --meta-batch-size 12 \
+    --outer-generations 1500 \
+    --heldout-task-batch-size 16 \
     --support-episodes 2 \
     --query-episodes 2 \
+    --episode-horizon 1000 \
+    --parameter-block-size 1024 \
+    --mutation-block-ratio 1.0 \
+    --brax-backend spring \
+    --env-id ant \
     --budget-match-srghn \
     --output results/meta_brax_heading_srghn_budget_matched.pkl

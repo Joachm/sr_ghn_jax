@@ -26,7 +26,8 @@ from experiments.gymnax_minatar_suite import population_for_eval_budget
 class ExperimentConfigTests(unittest.TestCase):
     def test_minatar_population_resolves_from_candidate_budget(self):
         self.assertEqual(population_for_eval_budget("evosax", 200, 1), 200)
-        self.assertEqual(population_for_eval_budget("srghn", 200, 1), 100)
+        self.assertEqual(population_for_eval_budget("evosax", 200, 4), 200)
+        self.assertEqual(population_for_eval_budget("srghn", 200, 4), 40)
         with self.assertRaises(ValueError):
             population_for_eval_budget("srghn", 200, 8)
 

@@ -39,10 +39,37 @@ class MetaBraxHeadingTests(unittest.TestCase):
             wandb_project=None,
         )
         srghn_cfg = mb_compare.budget_matched_srghn_config(vector_cfg)
+        self.assertEqual(srghn_cfg.outer_pop_size, 14)
+        self.assertEqual(srghn_cfg.outer_children_per_parent, 2)
+        self.assertEqual(srghn_cfg.inner_pop_size, 2)
+        self.assertEqual(srghn_cfg.inner_children_per_parent, 1)
+        self.assertEqual(srghn_cfg.inner_generations, 4)
         self.assertEqual(mb_compare.srghn_outer_candidate_evals(srghn_cfg), mb_compare.vector_outer_candidate_evals(vector_cfg))
         self.assertEqual(
             mb_compare.srghn_inner_support_candidate_evals(srghn_cfg),
             mb_compare.vector_inner_support_candidate_evals(vector_cfg),
+        )
+
+    def test_budget_matched_meta_brax_episode_budget_is_exact(self):
+        vector_cfg = mb.MetaBraxConfig(
+            outer_pop_size=42, inner_pop_size=2, inner_generations=4,
+            meta_batch_size=12, support_episodes=2, query_episodes=2,
+            wandb_project=None,
+        )
+        srghn_cfg = mb_compare.budget_matched_srghn_config(vector_cfg)
+        self.assertEqual(mb_compare.srghn_outer_candidate_evals(srghn_cfg), 42)
+        self.assertEqual(mb_compare.srghn_inner_support_candidate_evals(srghn_cfg), 10)
+        self.assertEqual(
+            mb_compare.environment_episodes_per_outer_generation(
+                srghn_cfg, outer_candidate_evals=42, inner_candidate_evals=10
+            ),
+            11088,
+        )
+        self.assertEqual(
+            mb_compare.environment_episodes_per_outer_generation(
+                vector_cfg, outer_candidate_evals=42, inner_candidate_evals=10
+            ),
+            11088,
         )
 
     def test_brax_config_helpers_are_exported(self):

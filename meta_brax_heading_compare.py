@@ -74,6 +74,19 @@ def srghn_inner_support_candidate_evals(cfg: MetaBraxConfig) -> int:
     return cfg.inner_pop_size * (1 + cfg.inner_generations * cfg.inner_children_per_parent)
 
 
+def environment_episodes_per_task(cfg: MetaBraxConfig, *, candidate_evals: int) -> int:
+    """Count support and query environment episodes for one adaptation task."""
+    return candidate_evals * cfg.support_episodes + cfg.query_episodes
+
+
+def environment_episodes_per_outer_generation(
+    cfg: MetaBraxConfig, *, outer_candidate_evals: int, inner_candidate_evals: int
+) -> int:
+    return outer_candidate_evals * cfg.meta_batch_size * environment_episodes_per_task(
+        cfg, candidate_evals=inner_candidate_evals
+    )
+
+
 def budget_matched_srghn_config(vector_cfg: MetaBraxConfig) -> MetaBraxConfig:
     """Map a vector baseline budget to SR-GHN without changing its outer operator."""
     candidates_per_outer_parent = 3  # one parent plus two children
@@ -98,33 +111,36 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", default="meta_brax_heading_compare.pkl")
     parser.add_argument("--print-config", action="store_true")
     parser.add_argument("--fast", action="store_true")
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--env-id", default="ant")
-    parser.add_argument("--backend", default="spring")
-    parser.add_argument("--outer-generations", type=int, default=200)
-    parser.add_argument("--meta-batch-size", type=int, default=10)
-    parser.add_argument("--heldout-task-batch-size", type=int, default=16)
-    parser.add_argument("--outer-pop-size", type=int, default=16)
-    parser.add_argument("--outer-children-per-parent", type=int, default=1)
-    parser.add_argument("--inner-pop-size", type=int, default=4)
-    parser.add_argument("--inner-children-per-parent", type=int, default=1)
-    parser.add_argument("--inner-generations", type=int, default=2)
-    parser.add_argument("--support-episodes", type=int, default=2)
-    parser.add_argument("--query-episodes", type=int, default=2)
-    parser.add_argument("--episode-horizon", type=int, default=1000)
-    parser.add_argument("--policy-hidden-dims", nargs="+", type=int, default=(32, 32, 32))
-    parser.add_argument("--embedding-dim", type=int, default=32)
-    parser.add_argument("--gnn-hidden-dim", type=int, default=32)
-    parser.add_argument("--gnn-steps-policy", type=int, default=10)
-    parser.add_argument("--gnn-steps-self", type=int, default=10)
-    parser.add_argument("--stoch-coeff-dim", type=int, default=32)
-    parser.add_argument("--parameter-block-size", type=int, default=64)
-    parser.add_argument("--mutation-block-ratio", type=float, default=0.125)
-    parser.add_argument("--mutation-rate-head-dim", type=int, default=5)
-    parser.add_argument("--const-noise-std", type=float, default=1e-3)
-    parser.add_argument("--fixed-mutation-lr", type=float, default=0.02)
-    parser.add_argument("--outer-evosax-sigma-init", type=float, default=0.05)
-    parser.add_argument("--inner-evosax-sigma-init", type=float, default=0.05)
+    parser.add_argument("--run-preset", default="default", choices=("default", "fast"))
+    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--env-id", default=None)
+    parser.add_argument("--backend", "--brax-backend", dest="backend", default=None)
+    parser.add_argument("--outer-generations", type=int, default=None)
+    parser.add_argument("--meta-batch-size", type=int, default=None)
+    parser.add_argument("--heldout-task-batch-size", type=int, default=None)
+    parser.add_argument("--outer-pop-size", type=int, default=None)
+    parser.add_argument("--outer-children-per-parent", type=int, default=None)
+    parser.add_argument("--inner-pop-size", type=int, default=None)
+    parser.add_argument("--inner-children-per-parent", type=int, default=None)
+    parser.add_argument("--inner-generations", type=int, default=None)
+    parser.add_argument("--support-episodes", type=int, default=None)
+    parser.add_argument("--query-episodes", type=int, default=None)
+    parser.add_argument("--episode-horizon", type=int, default=None)
+    parser.add_argument("--policy-hidden-dims", nargs="+", type=int, default=None)
+    parser.add_argument("--embedding-dim", type=int, default=None)
+    parser.add_argument("--gnn-hidden-dim", type=int, default=None)
+    parser.add_argument("--gnn-steps-policy", type=int, default=None)
+    parser.add_argument("--gnn-steps-self", type=int, default=None)
+    parser.add_argument("--stoch-coeff-dim", type=int, default=None)
+    parser.add_argument("--parameter-block-size", type=int, default=None)
+    parser.add_argument("--mutation-block-ratio", type=float, default=None)
+    parser.add_argument("--mutation-rate-head-dim", type=int, default=None)
+    parser.add_argument("--const-noise-std", type=float, default=None)
+    parser.add_argument("--fixed-mutation-lr", type=float, default=None)
+    parser.add_argument("--outer-evosax-sigma-init", type=float, default=None)
+    parser.add_argument("--inner-evosax-sigma-init", type=float, default=None)
+    parser.add_argument("--outer-evosax-std-decay", type=float, default=None)
+    parser.add_argument("--inner-evosax-std-decay", type=float, default=None)
     parser.add_argument(
         "--budget-match-srghn",
         action="store_true",
