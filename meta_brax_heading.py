@@ -29,7 +29,7 @@ from envs import make_env
 from evolution import init_population
 from experiments._common import build_graphs_and_specs
 from experiments.evosax_adapter import EvosaxStrategyAdapter
-from metrics import compute_experiment_metrics
+from metrics import add_resident_fitness_metrics, compute_evaluated_metrics, compute_experiment_metrics
 from obs_norm import normalize_obs
 from policy import apply_policy
 from policy_vectors import init_policy_vector_population, policy_num_dims, unflatten_policy_vector, zero_policy_vector
@@ -179,8 +179,8 @@ def wandb_config_payload(
     payload = asdict(cfg)
     payload["condition"] = asdict(cond)
     payload["resident_population_size"] = cfg.outer_pop_size
-    payload["num_reproducers"] = (cfg.outer_pop_size // cfg.outer_children_per_parent if cfg.outer_replacement_mode == "generational" else cfg.outer_pop_size)
-    payload["evaluated_candidates_per_generation"] = (cfg.outer_pop_size if cfg.outer_replacement_mode == "generational" else cfg.outer_pop_size * (1 + cfg.outer_children_per_parent))
+    payload["num_reproducers"] = (cfg.outer_pop_size // cfg.outer_children_per_parent if cfg.outer_replacement_mode in ("generational", "cached_elitist") else cfg.outer_pop_size)
+    payload["evaluated_candidates_per_generation"] = (cfg.outer_pop_size if cfg.outer_replacement_mode in ("generational", "cached_elitist") else cfg.outer_pop_size * (1 + cfg.outer_children_per_parent))
     if policy_spec is not None:
         payload["policy_spec_shapes"] = [tuple(shape) for shape in policy_spec.shapes]
         payload["policy_num_nodes"] = int(policy_spec.num_nodes)
@@ -1584,10 +1584,10 @@ def vector_meta_fitness(
 
 
 def srghn_outer_step(state: SRGHNMetaState, gen: jnp.ndarray, cfg: MetaBraxConfig, cond: ConditionSpec):
-    if cfg.outer_replacement_mode not in ("elitist_union", "generational"):
+    if cfg.outer_replacement_mode not in ("elitist_union", "generational", "cached_elitist"):
         raise ValueError(f"Unknown outer_replacement_mode: {cfg.outer_replacement_mode}")
-    if cfg.outer_replacement_mode == "generational" and (cfg.outer_children_per_parent <= 0 or cfg.outer_pop_size % cfg.outer_children_per_parent):
-        raise ValueError("Generational Meta-Brax SR-GHN requires positive children_per_parent dividing outer_pop_size.")
+    if cfg.outer_replacement_mode in ("generational", "cached_elitist") and (cfg.outer_children_per_parent <= 0 or cfg.outer_pop_size % cfg.outer_children_per_parent):
+        raise ValueError("Generational and cached-elitist Meta-Brax SR-GHN require positive children_per_parent dividing outer_pop_size.")
 
     key_next, key_tasks, key_eval, key_evolve = jax.random.split(state.key, 4)
     tasks = sample_heading_tasks(key_tasks, cfg.meta_batch_size)
@@ -1640,6 +1640,33 @@ def srghn_outer_step(state: SRGHNMetaState, gen: jnp.ndarray, cfg: MetaBraxConfi
         candidate_metadata = jax.tree_util.tree_map(lambda parent, child: jnp.concatenate([parent, child], axis=0), parent_metadata, child_metadata)
         elite_metadata = jax.tree_util.tree_map(lambda value: value[select_idx], candidate_metadata)
         metrics = compute_experiment_metrics(state.pop, all_fitness, parent_metadata, elite_metadata)
+        gen_best_idx = jnp.argmax(next_fitness)
+        gen_best = _select_srghn(next_pop, gen_best_idx)
+        gen_best_fit = next_fitness[gen_best_idx]
+    elif cfg.outer_replacement_mode == "cached_elitist":
+        def cached_initial(_):
+            evaluated_pop, evaluated_fitness, evaluated_metadata = initial(None)
+            return evaluated_pop, evaluated_fitness, evaluated_pop, evaluated_fitness, evaluated_metadata
+
+        def cached_later(_):
+            children, child_fitness, child_metadata = offspring(None)
+            pop_arr, pop_static = eqx.partition(state.pop, eqx.is_array)
+            child_arr, child_static = eqx.partition(children, eqx.is_array)
+            all_arr = jax.tree_util.tree_map(
+                lambda parent, child: jnp.concatenate([parent, child], axis=0), pop_arr, child_arr
+            )
+            all_candidates = eqx.combine(all_arr, child_static)
+            all_fitness = jnp.concatenate([state.pop_fitness, child_fitness], axis=0)
+            select_idx = jnp.argsort(all_fitness)[-cfg.outer_pop_size:]
+            next_pop = _select_batch_srghn(all_candidates, select_idx)
+            next_fitness = all_fitness[select_idx]
+            return children, child_fitness, next_pop, next_fitness, child_metadata
+
+        evaluated_pop, evaluated_fitness, next_pop, next_fitness, evaluated_metadata = jax.lax.cond(
+            gen == 0, cached_initial, cached_later, operand=None
+        )
+        metrics = compute_evaluated_metrics(evaluated_pop, evaluated_fitness, evaluated_metadata)
+        add_resident_fitness_metrics(metrics, next_fitness)
         gen_best_idx = jnp.argmax(next_fitness)
         gen_best = _select_srghn(next_pop, gen_best_idx)
         gen_best_fit = next_fitness[gen_best_idx]
@@ -1963,7 +1990,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--heldout-task-batch-size", type=int, default=None)
     parser.add_argument("--outer-pop-size", type=int, default=None)
     parser.add_argument("--outer-children-per-parent", type=int, default=None)
-    parser.add_argument("--outer-replacement-mode", choices=("elitist_union", "generational"), default=None)
+    parser.add_argument("--outer-replacement-mode", choices=("elitist_union", "generational", "cached_elitist"), default=None)
     parser.add_argument("--inner-pop-size", type=int, default=None)
     parser.add_argument("--inner-children-per-parent", type=int, default=None)
     parser.add_argument("--inner-generations", type=int, default=None)

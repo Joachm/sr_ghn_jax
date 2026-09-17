@@ -24,11 +24,20 @@ from experiments.gymnax_minatar_suite import population_for_eval_budget
 
 
 class ExperimentConfigTests(unittest.TestCase):
+    def test_minatar_parser_preserves_legacy_replacement_default(self):
+        module = importlib.import_module("experiments.gymnax_minatar_suite")
+        args = module.parse_args([])
+        self.assertEqual(args.srghn_replacement_mode, "elitist_union")
+        self.assertEqual(args.children_per_parent, 8)
+
     def test_minatar_population_resolves_from_candidate_budget(self):
         self.assertEqual(population_for_eval_budget("evosax", 200, 1), 200)
         self.assertEqual(population_for_eval_budget("evosax", 200, 4), 200)
         self.assertEqual(population_for_eval_budget("srghn", 200, 4), 40)
         self.assertEqual(population_for_eval_budget("srghn", 200, 2, "generational"), 200)
+        self.assertEqual(population_for_eval_budget("srghn", 200, 2, "cached_elitist"), 200)
+        with self.assertRaises(ValueError):
+            population_for_eval_budget("srghn", 201, 2, "generational")
         with self.assertRaises(ValueError):
             population_for_eval_budget("srghn", 200, 8)
 
@@ -106,6 +115,42 @@ class ExperimentConfigTests(unittest.TestCase):
             self.assertEqual(rc, 0, msg=module_name)
             payload = json.loads(stdout.getvalue())
             self.assertIn("config", payload)
+
+    def test_minatar_print_config_keeps_derived_counts_in_json(self):
+        module = importlib.import_module("experiments.gymnax_minatar_suite")
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            rc = module.main([
+                "--print-config",
+                "--optimizer-family",
+                "srghn",
+                "--eval-budget-per-generation",
+                "200",
+                "--children-per-parent",
+                "2",
+                "--srghn-replacement-mode",
+                "cached_elitist",
+            ])
+        self.assertEqual(rc, 0)
+        payload = json.loads(stdout.getvalue())
+        config = payload["config"]
+        self.assertEqual(config["resident_population_size"], 200)
+        self.assertEqual(config["num_reproducers"], 100)
+        self.assertEqual(config["evaluated_candidates_per_generation"], 200)
+
+    def test_minatar_evosax_print_config_does_not_require_srghn_fields(self):
+        module = importlib.import_module("experiments.gymnax_minatar_suite")
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            rc = module.main([
+                "--print-config",
+                "--optimizer-family",
+                "evosax",
+                "--evosax-algo",
+                "cma_es",
+            ])
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(stdout.getvalue())["config"]["optimizer_family"], "evosax")
 
     def test_catalog_markdown_matches_checked_in_reference(self):
         doc_path = Path("docs/experiment_configuration_reference.md")

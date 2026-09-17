@@ -31,11 +31,14 @@ def population_for_eval_budget(
         return eval_budget
     if optimizer_family != "srghn":
         raise ValueError(f"Unknown optimizer family: {optimizer_family}")
-    if replacement_mode == "generational":
-        if eval_budget % 1:
-            raise ValueError("Evaluation budget must be a whole population size.")
+    if replacement_mode in ("generational", "cached_elitist"):
+        if children_per_parent <= 0 or eval_budget % children_per_parent:
+            raise ValueError(
+                f"Generational evaluation budget {eval_budget} is not divisible by "
+                f"children_per_parent = {children_per_parent}."
+            )
         return eval_budget
-    if replacement_mode != "elitist_union":
+    if replacement_mode not in ("elitist_union", "generational", "cached_elitist"):
         raise ValueError(f"Unknown SR-GHN replacement mode: {replacement_mode}")
     candidates_per_parent = 1 + children_per_parent
     if eval_budget % candidates_per_parent:
@@ -87,8 +90,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Candidate/environment evaluations per generation; resolves --pop-size per optimizer family.",
     )
-    parser.add_argument("--children-per-parent", type=int, default=2)
-    parser.add_argument("--srghn-replacement-mode", choices=("elitist_union", "generational"), default="generational")
+    parser.add_argument("--children-per-parent", type=int, default=8)
+    parser.add_argument("--srghn-replacement-mode", choices=("elitist_union", "generational", "cached_elitist"), default="elitist_union")
     parser.add_argument("--episodes-per-eval", type=int, default=1)
     parser.add_argument("--episode-horizon", type=int, default=2500)
     parser.add_argument("--parameter-block-size", type=int, default=1024*4)
@@ -133,11 +136,6 @@ def main(argv: list[str] | None = None) -> int:
                 "parameter_block_size": args.parameter_block_size,
                 "mutation_block_ratio": args.mutation_block_ratio,
             },
-        )
-        print(
-            f"resident_population_size={template.pop_size} "
-            f"num_reproducers={template.pop_size // template.children_per_parent if template.srghn_replacement_mode == 'generational' else template.pop_size} "
-            f"evaluated_candidates_per_generation={template.pop_size if template.srghn_replacement_mode == 'generational' else template.pop_size * (1 + template.children_per_parent)}"
         )
         print_resolved_config(
             template,

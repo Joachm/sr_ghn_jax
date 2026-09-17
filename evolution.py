@@ -10,7 +10,7 @@ import jax.numpy as jnp
 from envs import iter_shift_windows, make_env
 from graphs import GraphSpec
 from hypernets import DeterministicHead, StochasticHyper
-from metrics import compute_experiment_metrics
+from metrics import add_resident_fitness_metrics, compute_evaluated_metrics, compute_experiment_metrics
 from obs_norm import ObsNormState, init_obs_norm, update_obs_norm
 from rollout import evaluate_individual_with_obs_stats
 from srghn import SRGHN, mutation_metadata, mutate_with_metadata
@@ -120,10 +120,10 @@ def init_population(key: jax.random.KeyArray, config, graphs, specs) -> SRGHN:
 
 def evo_step(state: EvoState, gen: jnp.int32, config) -> tuple[EvoState, dict]:
     replacement_mode = getattr(config, "srghn_replacement_mode", "elitist_union")
-    if replacement_mode not in ("elitist_union", "generational"):
+    if replacement_mode not in ("elitist_union", "generational", "cached_elitist"):
         raise ValueError(f"Unknown srghn_replacement_mode: {replacement_mode}")
-    if replacement_mode == "generational" and (config.children_per_parent <= 0 or config.pop_size % config.children_per_parent):
-        raise ValueError("Generational SR-GHN requires positive children_per_parent dividing pop_size.")
+    if replacement_mode in ("generational", "cached_elitist") and (config.children_per_parent <= 0 or config.pop_size % config.children_per_parent):
+        raise ValueError("Generational and cached-elitist SR-GHN require positive children_per_parent dividing pop_size.")
 
     key, key_eval, key_evolve = jax.random.split(state.key, 3)
 
@@ -137,6 +137,11 @@ def evo_step(state: EvoState, gen: jnp.int32, config) -> tuple[EvoState, dict]:
         wandb.log({"gen": int(gen_idx), **{name: float(value) for name, value in metrics_dict.items()}})
 
     def _select_individual(pop, idx):
+        pop_arr, pop_static = eqx.partition(pop, eqx.is_array)
+        pop_arr = jax.tree_util.tree_map(lambda x: x[idx], pop_arr)
+        return eqx.combine(pop_arr, pop_static)
+
+    def _select_batch(pop, idx):
         pop_arr, pop_static = eqx.partition(pop, eqx.is_array)
         pop_arr = jax.tree_util.tree_map(lambda x: x[idx], pop_arr)
         return eqx.combine(pop_arr, pop_static)
@@ -197,6 +202,93 @@ def evo_step(state: EvoState, gen: jnp.int32, config) -> tuple[EvoState, dict]:
             updated_obs_norm, state.obs_norm
         )
         return EvoState(next_pop, key, next_obs_norm, evaluated_fitness), metrics
+
+    def _cached_elitist_step():
+        mutation_kwargs = {
+            "excluded_modules": config.mutation_exclude_modules,
+            "fixed_mutation_lr": config.fixed_mutation_lr,
+        }
+
+        def evaluate(population, eval_key):
+            keys = jax.random.split(eval_key, config.pop_size)
+            return jax.vmap(
+                lambda i, k: evaluate_individual_with_obs_stats(
+                    _select_individual(population, i), k, gen, config, state.obs_norm
+                )
+            )(jnp.arange(config.pop_size), keys)
+
+        def make_children():
+            num_reproducers = config.pop_size // config.children_per_parent
+            repro_idx = jnp.argsort(state.pop_fitness)[-num_reproducers:]
+            pop_arr, pop_static = eqx.partition(state.pop, eqx.is_array)
+            parent_idx = jnp.repeat(repro_idx, config.children_per_parent)
+            parents_arr = jax.tree_util.tree_map(lambda x: x[parent_idx], pop_arr)
+            parents = eqx.combine(parents_arr, pop_static)
+            child_keys = jax.random.split(key_evolve, config.pop_size)
+            children, child_metadata = eqx.filter_vmap(
+                lambda indiv, child_key: mutate_with_metadata(indiv, child_key, **mutation_kwargs)
+            )(parents, child_keys)
+            child_fitness, child_obs_sum, child_obs_sq_sum, child_obs_count = evaluate(children, key_eval)
+            return children, child_fitness, child_metadata, child_obs_sum, child_obs_sq_sum, child_obs_count
+
+        def initial(_):
+            probe_keys = jax.random.split(key_evolve, config.pop_size)
+            metadata = eqx.filter_vmap(
+                lambda indiv, probe_key: mutation_metadata(indiv, probe_key, **mutation_kwargs)
+            )(state.pop, probe_keys)
+            fitness, obs_sum, obs_sq_sum, obs_count = evaluate(state.pop, key_eval)
+            return state.pop, fitness, state.pop, fitness, metadata, obs_sum, obs_sq_sum, obs_count
+
+        def later(_):
+            children, child_fitness, child_metadata, obs_sum, obs_sq_sum, obs_count = make_children()
+            windows = iter_shift_windows(config)
+            is_switch = (
+                jnp.asarray(False)
+                if not windows
+                else jnp.any(jnp.stack([gen == window.start_gen for window in windows]))
+            )
+
+            def replace(_):
+                return children, child_fitness
+
+            def union(_):
+                pop_arr, pop_static = eqx.partition(state.pop, eqx.is_array)
+                child_arr, child_static = eqx.partition(children, eqx.is_array)
+                all_arr = jax.tree_util.tree_map(
+                    lambda parent, child: jnp.concatenate([parent, child], axis=0), pop_arr, child_arr
+                )
+                all_candidates = eqx.combine(all_arr, child_static)
+                all_fitness = jnp.concatenate([state.pop_fitness, child_fitness], axis=0)
+                select_idx = jnp.argsort(all_fitness)[-config.pop_size:]
+                return _select_batch(all_candidates, select_idx), all_fitness[select_idx]
+
+            next_pop, next_fitness = jax.lax.cond(is_switch, replace, union, operand=None)
+            return children, child_fitness, next_pop, next_fitness, child_metadata, obs_sum, obs_sq_sum, obs_count
+
+        evaluated_pop, evaluated_fitness, next_pop, next_fitness, metadata, obs_sum, obs_sq_sum, obs_count = jax.lax.cond(
+            gen == 0, initial, later, operand=None
+        )
+        metrics = compute_evaluated_metrics(evaluated_pop, evaluated_fitness, metadata)
+        add_resident_fitness_metrics(metrics, next_fitness)
+        active_windows = 0
+        for window in iter_shift_windows(config):
+            active = gen >= window.start_gen if window.end_gen is None else jnp.logical_and(gen >= window.start_gen, gen <= window.end_gen)
+            active_windows = active_windows + active.astype(jnp.int32)
+        metrics["active_shift_windows"] = jnp.asarray(active_windows, dtype=jnp.float32)
+        jax.debug.callback(_wandb_log, metrics, gen)
+        updated_obs_norm = update_obs_norm(
+            state.obs_norm, jnp.sum(obs_sum, axis=0), jnp.sum(obs_sq_sum, axis=0), jnp.sum(obs_count, axis=0)
+        )
+        next_obs_norm = jax.tree_util.tree_map(
+            lambda updated, current: jnp.where(gen == config.num_generations - 1, current, updated),
+            updated_obs_norm, state.obs_norm
+        )
+        return EvoState(next_pop, key, next_obs_norm, next_fitness), metrics
+
+    if replacement_mode == "cached_elitist":
+        if config.children_per_parent <= 0 or config.pop_size % config.children_per_parent:
+            raise ValueError("Cached-elitist SR-GHN requires positive children_per_parent dividing pop_size.")
+        return _cached_elitist_step()
 
     if replacement_mode == "generational":
         return _generational_step()

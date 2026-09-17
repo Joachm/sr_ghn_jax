@@ -61,7 +61,11 @@ def vector_outer_candidate_evals(cfg: MetaBraxConfig) -> int:
 
 
 def srghn_outer_candidate_evals(cfg: MetaBraxConfig) -> int:
-    return cfg.outer_pop_size if cfg.outer_replacement_mode == "generational" else cfg.outer_pop_size * (1 + cfg.outer_children_per_parent)
+    return (
+        cfg.outer_pop_size
+        if cfg.outer_replacement_mode in ("generational", "cached_elitist")
+        else cfg.outer_pop_size * (1 + cfg.outer_children_per_parent)
+    )
 
 
 def vector_inner_support_candidate_evals(cfg: MetaBraxConfig) -> int:
@@ -88,12 +92,12 @@ def environment_episodes_per_outer_generation(
 
 
 def budget_matched_srghn_config(vector_cfg: MetaBraxConfig) -> MetaBraxConfig:
-    """Resolve the population-and-evaluation-matched generational SR-GHN config."""
+    """Resolve the population-and-evaluation-matched cached-elitist SR-GHN config."""
     return replace(
         vector_cfg,
         outer_pop_size=vector_cfg.outer_pop_size,
         outer_children_per_parent=2,
-        outer_replacement_mode="generational",
+        outer_replacement_mode="cached_elitist",
         inner_pop_size=vector_cfg.inner_pop_size,
         inner_children_per_parent=1,
         inner_generations=vector_cfg.inner_generations,
@@ -116,7 +120,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--heldout-task-batch-size", type=int, default=None)
     parser.add_argument("--outer-pop-size", type=int, default=None)
     parser.add_argument("--outer-children-per-parent", type=int, default=None)
-    parser.add_argument("--outer-replacement-mode", choices=("elitist_union", "generational"), default=None)
+    parser.add_argument("--outer-replacement-mode", choices=("elitist_union", "generational", "cached_elitist"), default=None)
     parser.add_argument("--inner-pop-size", type=int, default=None)
     parser.add_argument("--inner-children-per-parent", type=int, default=None)
     parser.add_argument("--inner-generations", type=int, default=None)
@@ -141,7 +145,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--budget-match-srghn",
         action="store_true",
-        help="Use the cached-inner-fitness SR-GHN configuration that matches vector candidate budgets.",
+        help="Use the cached-elitist SR-GHN configuration matching vector population and candidate budgets.",
     )
     parser.add_argument("--no-wandb", action="store_true")
     parser.add_argument("--wandb-project", default=None)

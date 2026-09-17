@@ -41,7 +41,7 @@ class MetaBraxHeadingTests(unittest.TestCase):
         srghn_cfg = mb_compare.budget_matched_srghn_config(vector_cfg)
         self.assertEqual(srghn_cfg.outer_pop_size, 42)
         self.assertEqual(srghn_cfg.outer_children_per_parent, 2)
-        self.assertEqual(srghn_cfg.outer_replacement_mode, "generational")
+        self.assertEqual(srghn_cfg.outer_replacement_mode, "cached_elitist")
         self.assertEqual(srghn_cfg.inner_pop_size, 2)
         self.assertEqual(srghn_cfg.inner_children_per_parent, 1)
         self.assertEqual(srghn_cfg.inner_generations, 4)
@@ -72,6 +72,59 @@ class MetaBraxHeadingTests(unittest.TestCase):
             ),
             11088,
         )
+
+    def test_cached_elitist_outer_step_selects_reproducers_and_evaluates_only_children(self):
+        cfg = mb.MetaBraxConfig(
+            outer_pop_size=6,
+            outer_children_per_parent=2,
+            outer_replacement_mode="cached_elitist",
+            meta_batch_size=1,
+            inner_pop_size=2,
+            inner_children_per_parent=1,
+            inner_generations=0,
+            support_episodes=1,
+            query_episodes=1,
+            wandb_project=None,
+        )
+        cond = mb.parse_condition_spec(BASELINE_FULL, fixed_mutation_lr=cfg.baseline_fixed_mutation_lr)
+        state = mb.SRGHNMetaState(
+            pop=jnp.arange(6, dtype=jnp.float32),
+            key=jax.random.PRNGKey(0),
+            pop_fitness=jnp.arange(6, dtype=jnp.float32),
+            best_fitness=jnp.asarray(-jnp.inf),
+            best_indiv=jnp.asarray(-1.0),
+        )
+        evaluations = []
+
+        def fake_meta_fitness(indiv, key, tasks, config, condition):
+            del key, tasks, config, condition
+            jax.debug.callback(lambda _: evaluations.append(1), indiv)
+            return jnp.where(indiv >= 100.0, indiv - 100.0, indiv)
+
+        def fake_mutation(indiv, key, **kwargs):
+            del key, kwargs
+            return indiv + 100.0, jnp.asarray(0.0)
+
+        tasks = mb.BraxHeadingTaskBatch(headings=jnp.zeros((1, 2), dtype=jnp.float32))
+        with (
+            mock.patch.object(mb, "sample_heading_tasks", return_value=tasks),
+            mock.patch.object(mb, "srghn_meta_fitness", side_effect=fake_meta_fitness),
+            mock.patch.object(mb, "mutation_metadata", return_value=jnp.asarray(0.0)),
+            mock.patch.object(mb, "mutate_with_metadata", side_effect=fake_mutation),
+            mock.patch.object(mb, "compute_experiment_metrics", side_effect=lambda pop, fitness, parent, elite: {"fitness_best": jnp.max(fitness), "fitness_mean": jnp.mean(fitness)}),
+        ):
+            next_state, _ = mb.srghn_outer_step(state, jnp.asarray(1, dtype=jnp.int32), cfg, cond)
+
+        self.assertEqual(len(evaluations), 6)
+        next_pop = np.asarray(next_state.pop)
+        next_fitness = np.asarray(next_state.pop_fitness)
+        self.assertIn(4.0, next_pop)
+        self.assertIn(5.0, next_pop)
+        for parent in (4.0, 5.0):
+            self.assertEqual(float(next_fitness[np.where(next_pop == parent)[0][0]]), parent)
+        for child in (103.0, 105.0):
+            self.assertEqual(float(next_fitness[np.where(next_pop == child)[0][0]]), child - 100.0)
+        self.assertEqual(next_state.pop_fitness.shape, (6,))
 
     def test_brax_config_helpers_are_exported(self):
         self.assertTrue(hasattr(configs, "make_config_ant_brax"))

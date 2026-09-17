@@ -9,15 +9,15 @@ python -m experiments.gymnax_minatar_suite \
     --seeds 0 1 2 3 4 \
     --pop-size 200 \
     --children-per-parent 2 \
-    --srghn-replacement-mode generational \
+    --srghn-replacement-mode cached_elitist \
     --eval-budget-per-generation 200 \
     --num-generations 24000 \
     --episodes-per-eval 1 \
     --episode-horizon 2500 \
     --parameter-block-size 4096 \
     --mutation-block-ratio 1.0 \
-    --project srghn-spaceinvaders-population-eval-matched \
-    --output-dir results/gymnax_minatar_population_eval_matched
+    --project srghn-spaceinvaders-cached-elitist-matched \
+    --output-dir results/gymnax_minatar_cached_elitist_matched
 
 python meta_brax_heading_compare.py \
     --conditions srghn_full \
@@ -37,8 +37,8 @@ python meta_brax_heading_compare.py \
     --mutation-block-ratio 1.0 \
     --env-id ant \
     --brax-backend spring \
-    --outer-replacement-mode generational \
+    --outer-replacement-mode cached_elitist \
     --budget-match-srghn \
-    --wandb-project meta_brax_heading_population_eval_matched \
-    --wandb-group srghn_population_eval_matched \
-    --output results/meta_brax_heading_population_eval_matched.pkl
+    --wandb-project meta_brax_heading_cached_elitist_matched \
+    --wandb-group srghn_cached_elitist_matched \
+    --output results/meta_brax_heading_cached_elitist_matched.pkl

@@ -87,6 +87,24 @@ def compute_experiment_metrics(
     return metrics
 
 
+def compute_evaluated_metrics(pop, fitness, metadata) -> dict:
+    metrics = compute_metrics(pop, fitness)
+    metrics.update(_metadata_stats("population", metadata))
+    metrics.update(zero_mutation_metrics("elite"))
+    return metrics
+
+
+def add_resident_fitness_metrics(metrics: dict, fitness: jnp.ndarray) -> dict:
+    metrics.update({
+        "resident_fitness_mean": jnp.mean(fitness),
+        "resident_fitness_best": jnp.max(fitness),
+        "resident_fitness_min": jnp.min(fitness),
+        "resident_fitness_std": jnp.std(fitness),
+        "resident_fitness_median": jnp.median(fitness),
+    })
+    return metrics
+
+
 def zero_mutation_metrics(prefix: str) -> dict:
     zero = jnp.asarray(0.0, dtype=jnp.float32)
     return {

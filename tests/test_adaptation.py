@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
+from unittest import mock
 
 import equinox as eqx
 import jax
@@ -37,6 +39,7 @@ from experiments._adaptation import (
     gymnax_suite_shift_windows,
 )
 from experiments._common import build_graphs_and_specs, default_wandb_project, run_experiment, wandb_config_payload
+import evolution as evolution_module
 from evolution import evo_step, init_population, EvoState
 from meta_sine_srghn import MetaSineConfig, parse_condition_spec, run_condition
 from obs_norm import flatten_observation, init_obs_norm, normalize_obs
@@ -430,6 +433,92 @@ class AdaptationTests(unittest.TestCase):
         np.testing.assert_allclose(first["final_population_fitness"], second["final_population_fitness"])
         np.testing.assert_allclose(first["adaptation_curve_query_mse"]["mean"], second["adaptation_curve_query_mse"]["mean"])
         np.testing.assert_allclose(first["adaptation_curve_query_mse"]["stderr"], second["adaptation_curve_query_mse"]["stderr"])
+
+    def test_generational_evo_step_selects_reproducers_and_evaluates_only_children(self):
+        config = SimpleNamespace(
+            pop_size=6,
+            children_per_parent=2,
+            srghn_replacement_mode="generational",
+            mutation_exclude_modules=(),
+            fixed_mutation_lr=None,
+            num_generations=2,
+            shift_windows=(),
+        )
+        state = EvoState(
+            pop=jnp.arange(6, dtype=jnp.float32),
+            key=jax.random.PRNGKey(0),
+            obs_norm=jnp.asarray(0.0),
+            pop_fitness=jnp.arange(6, dtype=jnp.float32),
+        )
+        evaluations = []
+
+        def fake_eval(indiv, key, gen, cfg, obs_norm):
+            del key, gen, cfg, obs_norm
+            jax.debug.callback(lambda _: evaluations.append(1), indiv)
+            return indiv, jnp.ones((1,)), jnp.ones((1,)), jnp.ones((1,))
+
+        def fake_mutation(indiv, key, **kwargs):
+            del key, kwargs
+            return indiv + 100.0, jnp.asarray(0.0)
+
+        with (
+            mock.patch.object(evolution_module, "evaluate_individual_with_obs_stats", side_effect=fake_eval),
+            mock.patch.object(evolution_module, "mutation_metadata", return_value=jnp.asarray(0.0)),
+            mock.patch.object(evolution_module, "mutate_with_metadata", side_effect=fake_mutation),
+            mock.patch.object(evolution_module, "compute_experiment_metrics", side_effect=lambda pop, fitness, parent, elite: {"fitness_mean": jnp.mean(fitness)}),
+        ):
+            next_state, _ = evolution_module.evo_step(state, jnp.asarray(1, dtype=jnp.int32), config)
+
+        self.assertEqual(len(evaluations), 6)
+        np.testing.assert_array_equal(np.asarray(next_state.pop), np.asarray([103, 103, 104, 104, 105, 105], dtype=np.float32))
+        self.assertEqual(next_state.pop_fitness.shape, (6,))
+
+    def test_cached_elitist_evo_step_handles_stationary_and_switch_generations(self):
+        def make_config(shift_windows):
+            return SimpleNamespace(
+                pop_size=6,
+                children_per_parent=2,
+                srghn_replacement_mode="cached_elitist",
+                mutation_exclude_modules=(),
+                fixed_mutation_lr=None,
+                num_generations=2,
+                shift_windows=shift_windows,
+            )
+
+        def fake_eval(indiv, key, gen, cfg, obs_norm):
+            del key, gen, cfg, obs_norm
+            jax.debug.callback(lambda _: evaluations.append(1), indiv)
+            return jnp.where(indiv >= 100.0, indiv - 100.0, indiv), jnp.ones((1,)), jnp.ones((1,)), jnp.ones((1,))
+
+        def fake_mutation(indiv, key, **kwargs):
+            del key, kwargs
+            return indiv + 100.0, jnp.asarray(0.0)
+
+        with (
+            mock.patch.object(evolution_module, "evaluate_individual_with_obs_stats", side_effect=fake_eval),
+            mock.patch.object(evolution_module, "mutation_metadata", return_value=jnp.asarray(0.0)),
+            mock.patch.object(evolution_module, "mutate_with_metadata", side_effect=fake_mutation),
+            mock.patch.object(evolution_module, "compute_experiment_metrics", side_effect=lambda pop, fitness, parent, elite: {"fitness_mean": jnp.mean(fitness)}),
+        ):
+            evaluations = []
+            stationary_state = EvoState(jnp.arange(6, dtype=jnp.float32), jax.random.PRNGKey(0), jnp.asarray(0.0), jnp.arange(6, dtype=jnp.float32))
+            stationary_next, _ = evolution_module.evo_step(stationary_state, jnp.asarray(1, dtype=jnp.int32), make_config(()))
+            self.assertEqual(len(evaluations), 6)
+            stationary_pop = np.asarray(stationary_next.pop)
+            stationary_fitness = np.asarray(stationary_next.pop_fitness)
+            self.assertIn(4.0, stationary_pop)
+            self.assertIn(5.0, stationary_pop)
+            self.assertEqual(float(stationary_fitness[np.where(stationary_pop == 4.0)[0][0]]), 4.0)
+
+            evaluations.clear()
+            switch_state = EvoState(jnp.arange(6, dtype=jnp.float32), jax.random.PRNGKey(0), jnp.asarray(0.0), jnp.arange(6, dtype=jnp.float32))
+            switch_next, _ = evolution_module.evo_step(
+                switch_state,
+                jnp.asarray(1, dtype=jnp.int32),
+                make_config((ShiftWindowConfig(1, None, "discrete_reverse"),)),
+            )
+            self.assertEqual(len(evaluations), 6)
+            np.testing.assert_array_equal(np.asarray(switch_next.pop), np.asarray([103, 103, 104, 104, 105, 105], dtype=np.float32))
 
     def test_short_cartpole_smoke_runs_all_baselines(self):
         try:
