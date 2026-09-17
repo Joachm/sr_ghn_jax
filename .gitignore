@@ -215,3 +215,10 @@ artifacts/
 *.mp4
 *.zip
 
+
+# Local experiment exports, rendered figures, installers, worktrees, and W&B environments
+/data/
+/figures/
+/Miniconda3-*.sh
+/.worktrees/
+.wandb-export-venv/
