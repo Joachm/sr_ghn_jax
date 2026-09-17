@@ -16,6 +16,29 @@ POLICY_CONV_STRIDES = ((1, 1),)
 POLICY_HIDDEN_DIMS = (128,)
 
 
+def population_for_eval_budget(
+    optimizer_family: str,
+    eval_budget: int,
+    children_per_parent: int,
+) -> int:
+    """Resolve the family-specific population size for one candidate budget."""
+    if eval_budget <= 0:
+        raise ValueError("eval_budget must be positive.")
+    if children_per_parent < 0:
+        raise ValueError("children_per_parent must be non-negative.")
+    if optimizer_family == "evosax":
+        return eval_budget
+    if optimizer_family != "srghn":
+        raise ValueError(f"Unknown optimizer family: {optimizer_family}")
+    candidates_per_parent = 1 + children_per_parent
+    if eval_budget % candidates_per_parent:
+        raise ValueError(
+            f"Evaluation budget {eval_budget} is not divisible by "
+            f"1 + children_per_parent = {candidates_per_parent}."
+        )
+    return eval_budget // candidates_per_parent
+
+
 def _safe_name(value: str) -> str:
     return value.replace("/", "_").replace(":", "_")
 
@@ -51,6 +74,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--skip-existing", action="store_true")
     parser.add_argument("--num-generations", type=int, default=24000)
     parser.add_argument("--pop-size", type=int, default=200)
+    parser.add_argument(
+        "--eval-budget-per-generation",
+        type=int,
+        default=None,
+        help="Candidate/environment evaluations per generation; resolves --pop-size per optimizer family.",
+    )
     parser.add_argument("--children-per-parent", type=int, default=8)
     parser.add_argument("--episodes-per-eval", type=int, default=1)
     parser.add_argument("--episode-horizon", type=int, default=2500)
@@ -66,6 +95,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     seeds = args.seeds or list(range(5))
+    resolved_pop_size = (
+        population_for_eval_budget(
+            args.optimizer_family,
+            args.eval_budget_per_generation,
+            args.children_per_parent,
+        )
+        if args.eval_budget_per_generation is not None
+        else args.pop_size
+    )
     if args.print_config:
         template = resolve_nonstationary_gymnax_config(
             GYMNAX_MINATAR_SUITE_ENVIRONMENTS[0],
@@ -78,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
                 "evosax_sigma_init": args.evosax_sigma_init,
                 "fixed_mutation_lr": args.fixed_mutation_lr,
                 "num_generations": args.num_generations,
-                "pop_size": args.pop_size,
+                "pop_size": resolved_pop_size,
                 "children_per_parent": args.children_per_parent,
                 "episodes_per_eval": args.episodes_per_eval,
                 "episode_horizon": args.episode_horizon,
@@ -106,7 +144,7 @@ def main(argv: list[str] | None = None) -> int:
                     run_preset=args.run_preset,
                     overrides={
                         "seed": seed,
-                        "pop_size": args.pop_size,
+                        "pop_size": resolved_pop_size,
                         "num_generations": args.num_generations,
                         "episode_horizon": args.episode_horizon,
                         "children_per_parent": args.children_per_parent,

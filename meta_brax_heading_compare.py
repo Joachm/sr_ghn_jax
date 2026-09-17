@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import pickle
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from math import sqrt
 
@@ -56,6 +56,41 @@ def aggregate_results(results: list[dict[str, object]]) -> dict[str, object]:
     return aggregate
 
 
+def vector_outer_candidate_evals(cfg: MetaBraxConfig) -> int:
+    return cfg.outer_pop_size
+
+
+def srghn_outer_candidate_evals(cfg: MetaBraxConfig) -> int:
+    return cfg.outer_pop_size * (1 + cfg.outer_children_per_parent)
+
+
+def vector_inner_support_candidate_evals(cfg: MetaBraxConfig) -> int:
+    return cfg.inner_pop_size * (1 + cfg.inner_generations)
+
+
+def srghn_inner_support_candidate_evals(cfg: MetaBraxConfig) -> int:
+    # Parent support fitness is cached within an adaptation task; only children
+    # require new support rollouts after the initial population evaluation.
+    return cfg.inner_pop_size * (1 + cfg.inner_generations * cfg.inner_children_per_parent)
+
+
+def budget_matched_srghn_config(vector_cfg: MetaBraxConfig) -> MetaBraxConfig:
+    """Map a vector baseline budget to SR-GHN without changing its outer operator."""
+    candidates_per_outer_parent = 3  # one parent plus two children
+    if vector_cfg.outer_pop_size % candidates_per_outer_parent:
+        raise ValueError(
+            "Budget-matched SR-GHN requires a vector outer population divisible by three."
+        )
+    return replace(
+        vector_cfg,
+        outer_pop_size=vector_cfg.outer_pop_size // candidates_per_outer_parent,
+        outer_children_per_parent=2,
+        inner_pop_size=vector_cfg.inner_pop_size,
+        inner_children_per_parent=1,
+        inner_generations=vector_cfg.inner_generations,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run a multi-seed comparison for the meta-Brax heading task.")
     parser.add_argument("--conditions", nargs="+", default=BASELINE_NAMES)
@@ -90,6 +125,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fixed-mutation-lr", type=float, default=0.02)
     parser.add_argument("--outer-evosax-sigma-init", type=float, default=0.05)
     parser.add_argument("--inner-evosax-sigma-init", type=float, default=0.05)
+    parser.add_argument(
+        "--budget-match-srghn",
+        action="store_true",
+        help="Use the cached-inner-fitness SR-GHN configuration that matches vector candidate budgets.",
+    )
     parser.add_argument("--no-wandb", action="store_true")
     parser.add_argument("--wandb-project", default=None)
     parser.add_argument("--wandb-group", default=None)
@@ -119,8 +159,23 @@ def main(argv: list[str] | None = None) -> int:
         for seed in seeds:
             cfg = MetaBraxConfig(**{**asdict(base_cfg), "seed": seed})
             cond = parse_condition_spec(baseline_name, fixed_mutation_lr=cfg.baseline_fixed_mutation_lr)
+            if args.budget_match_srghn and cond.search_object == "srghn":
+                cfg = budget_matched_srghn_config(cfg)
             print(f"[run] baseline={baseline_name} seed={seed}", flush=True)
-            results.append(run_condition(cfg, cond))
+            result = run_condition(cfg, cond)
+            result["candidate_evaluation_budget"] = {
+                "outer_per_generation": (
+                    srghn_outer_candidate_evals(cfg)
+                    if cond.search_object == "srghn"
+                    else vector_outer_candidate_evals(cfg)
+                ),
+                "inner_support_per_task": (
+                    srghn_inner_support_candidate_evals(cfg)
+                    if cond.search_object == "srghn"
+                    else vector_inner_support_candidate_evals(cfg)
+                ),
+            }
+            results.append(result)
 
     payload = {
         "base_config": asdict(base_cfg),
@@ -130,6 +185,7 @@ def main(argv: list[str] | None = None) -> int:
             run_preset="fast" if args.fast else "default",
         ),
         "seeds": seeds,
+        "budget_match_srghn": args.budget_match_srghn,
         "results": results,
         "aggregate": aggregate_results(results),
     }

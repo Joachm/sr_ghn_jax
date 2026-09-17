@@ -12,6 +12,7 @@ import numpy as np
 
 import configs
 import meta_brax_heading as mb
+import meta_brax_heading_compare as mb_compare
 from configs import BASELINE_FIXED_LR, BASELINE_FROZEN_MUTATION, BASELINE_FULL, BASELINE_NO_SELF_REFERENCE
 
 
@@ -30,6 +31,20 @@ def _make_state(*, metrics=None, x: float | None = None, y: float | None = None)
 
 
 class MetaBraxHeadingTests(unittest.TestCase):
+    def test_budget_matched_srghn_matches_vector_candidate_counts(self):
+        vector_cfg = mb.MetaBraxConfig(
+            outer_pop_size=42,
+            inner_pop_size=2,
+            inner_generations=4,
+            wandb_project=None,
+        )
+        srghn_cfg = mb_compare.budget_matched_srghn_config(vector_cfg)
+        self.assertEqual(mb_compare.srghn_outer_candidate_evals(srghn_cfg), mb_compare.vector_outer_candidate_evals(vector_cfg))
+        self.assertEqual(
+            mb_compare.srghn_inner_support_candidate_evals(srghn_cfg),
+            mb_compare.vector_inner_support_candidate_evals(vector_cfg),
+        )
+
     def test_brax_config_helpers_are_exported(self):
         self.assertTrue(hasattr(configs, "make_config_ant_brax"))
         self.assertTrue(hasattr(configs, "make_config_brax_generic"))

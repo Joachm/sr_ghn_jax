@@ -771,15 +771,17 @@ def init_local_evosax_state(
     key_init, key_boot = jax.random.split(key)
     center = jnp.asarray(center, dtype=jnp.float32)
     pop_size = adapter.pop_size
-    initial_population = jnp.tile(center[None, :], (pop_size, 1))
-    initial_fitness = jax.vmap(fitness_fn)(initial_population)
 
     if adapter.init_signature == ("key", "mean", "params"):
+        initial_population = jnp.tile(center[None, :], (pop_size, 1))
+        initial_fitness = jax.vmap(fitness_fn)(initial_population)
         strategy_state = adapter.strategy.init(key_init, center, adapter.params)
         needs_initial_shift = jnp.asarray(False)
         population = initial_population
         fitness = initial_fitness
     elif adapter.init_signature == ("key", "params"):
+        initial_population = jnp.tile(center[None, :], (pop_size, 1))
+        initial_fitness = jax.vmap(fitness_fn)(initial_population)
         strategy_state = adapter.strategy.init(key_init, adapter.params)
         strategy_state, centered = _center_evosax_state(strategy_state, center)
         needs_initial_shift = jnp.asarray(not centered)
@@ -1386,6 +1388,7 @@ def _srghn_mutation_kwargs(cond: ConditionSpec) -> dict[str, Any]:
 
 def srghn_population_generation(
     pop: SRGHN,
+    parent_fitness: jnp.ndarray,
     key: jax.Array,
     pop_size: int,
     children_per_parent: int,
@@ -1399,7 +1402,7 @@ def srghn_population_generation(
 
     if children_per_parent <= 0:
         all_candidates = pop
-        all_fitness = eqx.filter_vmap(fitness_fn)(all_candidates)
+        all_fitness = parent_fitness
         select_idx = jnp.argsort(all_fitness)[-pop_size:]
         next_pop = _select_batch_srghn(all_candidates, select_idx)
         next_fitness = all_fitness[select_idx]
@@ -1420,7 +1423,10 @@ def srghn_population_generation(
     child_arr, child_static = eqx.partition(children, eqx.is_array)
     all_arr = jax.tree_util.tree_map(lambda parent, child: jnp.concatenate([parent, child], axis=0), pop_arr, child_arr)
     all_candidates = eqx.combine(all_arr, child_static)
-    all_fitness = eqx.filter_vmap(fitness_fn)(all_candidates)
+    child_fitness = eqx.filter_vmap(fitness_fn)(children)
+    # Inner adaptation reuses the identical heading and support episode keys.
+    # Parent fitness is therefore exact and can be carried across generations.
+    all_fitness = jnp.concatenate([parent_fitness, child_fitness], axis=0)
 
     select_idx = jnp.argsort(all_fitness)[-pop_size:]
     next_arr = jax.tree_util.tree_map(lambda value: value[select_idx], all_arr)
@@ -1463,10 +1469,11 @@ def srghn_adapt(
     init_fitness = eqx.filter_vmap(support_fitness)(init_pop)
 
     def step_fn(carry, _):
-        pop, rng, _fitness = carry
+        pop, rng, parent_fitness = carry
         rng, step_key = jax.random.split(rng)
         next_pop, next_fitness, _ = srghn_population_generation(
             pop,
+            parent_fitness,
             step_key,
             cfg.inner_pop_size,
             cfg.inner_children_per_parent,
@@ -1508,10 +1515,11 @@ def srghn_task_curve(
     initial_return = evaluate_individual_on_heading(best0, query_keys, heading, cfg)
 
     def step_fn(carry, _):
-        pop, rng, _fitness = carry
+        pop, rng, parent_fitness = carry
         rng, step_key = jax.random.split(rng)
         next_pop, next_fitness, _ = srghn_population_generation(
             pop,
+            parent_fitness,
             step_key,
             cfg.inner_pop_size,
             cfg.inner_children_per_parent,

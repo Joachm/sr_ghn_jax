@@ -20,9 +20,16 @@ from experiment_configs import (
 )
 from experiment_configs.catalog import render_experiment_catalog_markdown
 from experiments._adaptation import gymnax_suite_shift_windows
+from experiments.gymnax_minatar_suite import population_for_eval_budget
 
 
 class ExperimentConfigTests(unittest.TestCase):
+    def test_minatar_population_resolves_from_candidate_budget(self):
+        self.assertEqual(population_for_eval_budget("evosax", 200, 1), 200)
+        self.assertEqual(population_for_eval_budget("srghn", 200, 1), 100)
+        with self.assertRaises(ValueError):
+            population_for_eval_budget("srghn", 200, 8)
+
     def test_control_resolver_matches_stationary_gymnax_factory_defaults(self):
         expected = make_config_gymnax_generic("CartPole-v1")
         actual = resolve_gymnax_generic_config("CartPole-v1")
