@@ -7,4 +7,5 @@ wandb
 mujoco-playground
 pillow
 imageio
+matplotlib
 imageio-ffmpeg

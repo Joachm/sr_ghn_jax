@@ -211,3 +211,10 @@ __marimo__/
 
 
 wandb/
+.wandb-export-venv/
+
+# Local experiment exports, rendered figures, installers, and linked worktrees
+/data/
+/figures/
+/Miniconda3-*.sh
+/.worktrees/
