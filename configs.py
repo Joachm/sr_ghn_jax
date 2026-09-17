@@ -71,6 +71,7 @@ class ExperimentConfig:
     brax_backend: str | None
     obs_norm_clip: float
     obs_norm_eps: float
+    srghn_replacement_mode: str = "elitist_union"
 
 
 @dataclass(frozen=True)
@@ -225,6 +226,7 @@ def make_config_gymnax_generic(
     policy_conv_kernel_sizes: tuple[tuple[int, int], ...] = (),
     policy_conv_strides: tuple[tuple[int, int], ...] = (),
     policy_hidden_dims: tuple[int, ...] = (32, 32),
+    srghn_replacement_mode: str = "elitist_union",
 ) -> ExperimentConfig:
     return ExperimentConfig(
         task_name="gymnax_generic",
@@ -263,6 +265,7 @@ def make_config_gymnax_generic(
         mutation_exclude_modules=(),
         fixed_mutation_lr=None,
         wandb_project=None,
+        srghn_replacement_mode=srghn_replacement_mode,
         wandb_group=None,
         wandb_name=None,
         env_backend="gymnax",
@@ -465,6 +468,7 @@ def _with_nonstationary_overrides(
     wandb_project: str | None = None,
     wandb_group: str | None = None,
     wandb_name: str | None = None,
+    srghn_replacement_mode: str = "elitist_union",
 ) -> ExperimentConfig:
     return config.__class__(
         **{
@@ -479,6 +483,7 @@ def _with_nonstationary_overrides(
             "wandb_project": wandb_project,
             "wandb_group": wandb_group,
             "wandb_name": wandb_name,
+            "srghn_replacement_mode": srghn_replacement_mode,
         }
     )
 
@@ -546,6 +551,7 @@ def make_config_nonstationary_gymnax(
     wandb_project: str | None = None,
     wandb_group: str | None = None,
     wandb_name: str | None = None,
+    srghn_replacement_mode: str = "elitist_union",
 ) -> ExperimentConfig | EvosaxControlConfig:
     resolved_pop_size = (
         gymnax_control_pop_size(children_per_parent)
@@ -605,6 +611,7 @@ def make_config_nonstationary_gymnax(
         wandb_project=wandb_project,
         wandb_group=wandb_group,
         wandb_name=wandb_name,
+        srghn_replacement_mode=srghn_replacement_mode,
         **baseline_overrides(baseline_name, fixed_mutation_lr=fixed_mutation_lr),
     )
 

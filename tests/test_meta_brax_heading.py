@@ -39,8 +39,9 @@ class MetaBraxHeadingTests(unittest.TestCase):
             wandb_project=None,
         )
         srghn_cfg = mb_compare.budget_matched_srghn_config(vector_cfg)
-        self.assertEqual(srghn_cfg.outer_pop_size, 14)
+        self.assertEqual(srghn_cfg.outer_pop_size, 42)
         self.assertEqual(srghn_cfg.outer_children_per_parent, 2)
+        self.assertEqual(srghn_cfg.outer_replacement_mode, "generational")
         self.assertEqual(srghn_cfg.inner_pop_size, 2)
         self.assertEqual(srghn_cfg.inner_children_per_parent, 1)
         self.assertEqual(srghn_cfg.inner_generations, 4)

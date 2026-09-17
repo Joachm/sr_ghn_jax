@@ -20,6 +20,7 @@ def population_for_eval_budget(
     optimizer_family: str,
     eval_budget: int,
     children_per_parent: int,
+    replacement_mode: str = "elitist_union",
 ) -> int:
     """Resolve the family-specific population size for one candidate budget."""
     if eval_budget <= 0:
@@ -30,6 +31,12 @@ def population_for_eval_budget(
         return eval_budget
     if optimizer_family != "srghn":
         raise ValueError(f"Unknown optimizer family: {optimizer_family}")
+    if replacement_mode == "generational":
+        if eval_budget % 1:
+            raise ValueError("Evaluation budget must be a whole population size.")
+        return eval_budget
+    if replacement_mode != "elitist_union":
+        raise ValueError(f"Unknown SR-GHN replacement mode: {replacement_mode}")
     candidates_per_parent = 1 + children_per_parent
     if eval_budget % candidates_per_parent:
         raise ValueError(
@@ -80,7 +87,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Candidate/environment evaluations per generation; resolves --pop-size per optimizer family.",
     )
-    parser.add_argument("--children-per-parent", type=int, default=8)
+    parser.add_argument("--children-per-parent", type=int, default=2)
+    parser.add_argument("--srghn-replacement-mode", choices=("elitist_union", "generational"), default="generational")
     parser.add_argument("--episodes-per-eval", type=int, default=1)
     parser.add_argument("--episode-horizon", type=int, default=2500)
     parser.add_argument("--parameter-block-size", type=int, default=1024*4)
@@ -100,6 +108,7 @@ def main(argv: list[str] | None = None) -> int:
             args.optimizer_family,
             args.eval_budget_per_generation,
             args.children_per_parent,
+            args.srghn_replacement_mode,
         )
         if args.eval_budget_per_generation is not None
         else args.pop_size
@@ -118,11 +127,17 @@ def main(argv: list[str] | None = None) -> int:
                 "num_generations": args.num_generations,
                 "pop_size": resolved_pop_size,
                 "children_per_parent": args.children_per_parent,
+                        "srghn_replacement_mode": args.srghn_replacement_mode,
                 "episodes_per_eval": args.episodes_per_eval,
                 "episode_horizon": args.episode_horizon,
                 "parameter_block_size": args.parameter_block_size,
                 "mutation_block_ratio": args.mutation_block_ratio,
             },
+        )
+        print(
+            f"resident_population_size={template.pop_size} "
+            f"num_reproducers={template.pop_size // template.children_per_parent if template.srghn_replacement_mode == 'generational' else template.pop_size} "
+            f"evaluated_candidates_per_generation={template.pop_size if template.srghn_replacement_mode == 'generational' else template.pop_size * (1 + template.children_per_parent)}"
         )
         print_resolved_config(
             template,
@@ -148,6 +163,7 @@ def main(argv: list[str] | None = None) -> int:
                         "num_generations": args.num_generations,
                         "episode_horizon": args.episode_horizon,
                         "children_per_parent": args.children_per_parent,
+                        "srghn_replacement_mode": args.srghn_replacement_mode,
                         "episodes_per_eval": args.episodes_per_eval,
                         "parameter_block_size": args.parameter_block_size,
                         "mutation_block_ratio": args.mutation_block_ratio,

@@ -56,6 +56,7 @@ class MetaBraxConfig:
     heldout_task_batch_size: int = 16
     outer_pop_size: int = 16
     outer_children_per_parent: int = 2
+    outer_replacement_mode: str = "elitist_union"
     inner_pop_size: int = 4
     inner_children_per_parent: int = 2
     inner_generations: int = 4

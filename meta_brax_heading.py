@@ -178,6 +178,9 @@ def wandb_config_payload(
 ) -> dict[str, Any]:
     payload = asdict(cfg)
     payload["condition"] = asdict(cond)
+    payload["resident_population_size"] = cfg.outer_pop_size
+    payload["num_reproducers"] = (cfg.outer_pop_size // cfg.outer_children_per_parent if cfg.outer_replacement_mode == "generational" else cfg.outer_pop_size)
+    payload["evaluated_candidates_per_generation"] = (cfg.outer_pop_size if cfg.outer_replacement_mode == "generational" else cfg.outer_pop_size * (1 + cfg.outer_children_per_parent))
     if policy_spec is not None:
         payload["policy_spec_shapes"] = [tuple(shape) for shape in policy_spec.shapes]
         payload["policy_num_nodes"] = int(policy_spec.num_nodes)
@@ -1581,52 +1584,72 @@ def vector_meta_fitness(
 
 
 def srghn_outer_step(state: SRGHNMetaState, gen: jnp.ndarray, cfg: MetaBraxConfig, cond: ConditionSpec):
+    if cfg.outer_replacement_mode not in ("elitist_union", "generational"):
+        raise ValueError(f"Unknown outer_replacement_mode: {cfg.outer_replacement_mode}")
+    if cfg.outer_replacement_mode == "generational" and (cfg.outer_children_per_parent <= 0 or cfg.outer_pop_size % cfg.outer_children_per_parent):
+        raise ValueError("Generational Meta-Brax SR-GHN requires positive children_per_parent dividing outer_pop_size.")
+
     key_next, key_tasks, key_eval, key_evolve = jax.random.split(state.key, 4)
     tasks = sample_heading_tasks(key_tasks, cfg.meta_batch_size)
-    eval_keys = jax.random.split(key_eval, cfg.outer_pop_size * (1 + cfg.outer_children_per_parent))
+    mutation_kwargs = _srghn_mutation_kwargs(cond)
 
     def batched_fitness(indiv: SRGHN, eval_key: jax.Array) -> jnp.ndarray:
         return srghn_meta_fitness(indiv, eval_key, tasks, cfg, cond)
 
-    mutation_kwargs = _srghn_mutation_kwargs(cond)
-    probe_key, child_key = jax.random.split(key_evolve)
-    probe_keys = jax.random.split(probe_key, cfg.outer_pop_size)
-    parent_metadata = eqx.filter_vmap(
-        lambda indiv, rng: mutation_metadata(indiv, rng, **mutation_kwargs)
-    )(state.pop, probe_keys)
+    def initial(_):
+        eval_keys = jax.random.split(key_eval, cfg.outer_pop_size)
+        fitness = eqx.filter_vmap(batched_fitness)(state.pop, eval_keys)
+        probe_keys = jax.random.split(key_evolve, cfg.outer_pop_size)
+        metadata = eqx.filter_vmap(
+            lambda indiv, rng: mutation_metadata(indiv, rng, **mutation_kwargs)
+        )(state.pop, probe_keys)
+        return state.pop, fitness, metadata
 
-    pop_arr, pop_static = eqx.partition(state.pop, eqx.is_array)
-    parent_idx = jnp.repeat(jnp.arange(cfg.outer_pop_size), cfg.outer_children_per_parent)
-    parent_rep_arr = jax.tree_util.tree_map(lambda value: value[parent_idx], pop_arr)
-    parents_rep = eqx.combine(parent_rep_arr, pop_static)
+    def offspring(_):
+        num_reproducers = cfg.outer_pop_size // cfg.outer_children_per_parent
+        repro_idx = jnp.argsort(state.pop_fitness)[-num_reproducers:]
+        pop_arr, pop_static = eqx.partition(state.pop, eqx.is_array)
+        parent_idx = jnp.repeat(repro_idx, cfg.outer_children_per_parent)
+        parents_arr = jax.tree_util.tree_map(lambda value: value[parent_idx], pop_arr)
+        parents_rep = eqx.combine(parents_arr, pop_static)
+        child_keys = jax.random.split(key_evolve, cfg.outer_pop_size)
+        children, child_metadata = eqx.filter_vmap(
+            lambda indiv, rng: mutate_with_metadata(indiv, rng, **mutation_kwargs)
+        )(parents_rep, child_keys)
+        eval_keys = jax.random.split(key_eval, cfg.outer_pop_size)
+        fitness = eqx.filter_vmap(batched_fitness)(children, eval_keys)
+        return children, fitness, child_metadata
 
-    child_keys = jax.random.split(child_key, cfg.outer_pop_size * cfg.outer_children_per_parent)
-    children, child_metadata = eqx.filter_vmap(
-        lambda indiv, rng: mutate_with_metadata(indiv, rng, **mutation_kwargs)
-    )(parents_rep, child_keys)
+    if cfg.outer_replacement_mode == "elitist_union":
+        eval_keys = jax.random.split(key_eval, cfg.outer_pop_size * (1 + cfg.outer_children_per_parent))
+        probe_keys = jax.random.split(key_evolve, cfg.outer_pop_size)
+        parent_metadata = eqx.filter_vmap(lambda indiv, rng: mutation_metadata(indiv, rng, **mutation_kwargs))(state.pop, probe_keys)
+        pop_arr, pop_static = eqx.partition(state.pop, eqx.is_array)
+        parent_idx = jnp.repeat(jnp.arange(cfg.outer_pop_size), cfg.outer_children_per_parent)
+        parents_arr = jax.tree_util.tree_map(lambda value: value[parent_idx], pop_arr)
+        parents_rep = eqx.combine(parents_arr, pop_static)
+        child_keys = jax.random.split(jax.random.fold_in(key_evolve, 1), cfg.outer_pop_size * cfg.outer_children_per_parent)
+        children, child_metadata = eqx.filter_vmap(lambda indiv, rng: mutate_with_metadata(indiv, rng, **mutation_kwargs))(parents_rep, child_keys)
+        child_arr, child_static = eqx.partition(children, eqx.is_array)
+        all_arr = jax.tree_util.tree_map(lambda parent, child: jnp.concatenate([parent, child], axis=0), pop_arr, child_arr)
+        all_candidates = eqx.combine(all_arr, child_static)
+        all_fitness = eqx.filter_vmap(batched_fitness)(all_candidates, eval_keys)
+        select_idx = jnp.argsort(all_fitness)[-cfg.outer_pop_size:]
+        next_pop = _select_batch_srghn(all_candidates, select_idx)
+        next_fitness = all_fitness[select_idx]
+        candidate_metadata = jax.tree_util.tree_map(lambda parent, child: jnp.concatenate([parent, child], axis=0), parent_metadata, child_metadata)
+        elite_metadata = jax.tree_util.tree_map(lambda value: value[select_idx], candidate_metadata)
+        metrics = compute_experiment_metrics(state.pop, all_fitness, parent_metadata, elite_metadata)
+        gen_best_idx = jnp.argmax(next_fitness)
+        gen_best = _select_srghn(next_pop, gen_best_idx)
+        gen_best_fit = next_fitness[gen_best_idx]
+    else:
+        next_pop, next_fitness, evaluated_metadata = jax.lax.cond(gen == 0, initial, offspring, operand=None)
+        metrics = compute_experiment_metrics(next_pop, next_fitness, evaluated_metadata, evaluated_metadata)
+        gen_best_idx = jnp.argmax(next_fitness)
+        gen_best = _select_srghn(next_pop, gen_best_idx)
+        gen_best_fit = next_fitness[gen_best_idx]
 
-    child_arr, child_static = eqx.partition(children, eqx.is_array)
-    all_arr = jax.tree_util.tree_map(lambda parent, child: jnp.concatenate([parent, child], axis=0), pop_arr, child_arr)
-    all_candidates = eqx.combine(all_arr, child_static)
-    all_fitness = eqx.filter_vmap(batched_fitness)(all_candidates, eval_keys)
-
-    select_idx = jnp.argsort(all_fitness)[-cfg.outer_pop_size:]
-    next_arr = jax.tree_util.tree_map(lambda value: value[select_idx], all_arr)
-    next_pop = eqx.combine(next_arr, child_static)
-    next_fitness = all_fitness[select_idx]
-
-    candidate_metadata = jax.tree_util.tree_map(
-        lambda parent_value, child_value: jnp.concatenate([parent_value, child_value], axis=0),
-        parent_metadata,
-        child_metadata,
-    )
-    elite_metadata = jax.tree_util.tree_map(lambda value: value[select_idx], candidate_metadata)
-
-    gen_best_idx = jnp.argmax(next_fitness)
-    gen_best = _select_srghn(next_pop, gen_best_idx)
-    gen_best_fit = next_fitness[gen_best_idx]
-
-    metrics = compute_experiment_metrics(state.pop, all_fitness, parent_metadata, elite_metadata)
     metrics["query_return_best"] = metrics["fitness_best"]
     metrics["query_return_mean"] = metrics["fitness_mean"]
     metrics["query_return_best_so_far"] = jnp.maximum(state.best_fitness, gen_best_fit)
@@ -1634,14 +1657,7 @@ def srghn_outer_step(state: SRGHNMetaState, gen: jnp.ndarray, cfg: MetaBraxConfi
     improved = gen_best_fit > state.best_fitness
     best_indiv = jax.lax.cond(improved, lambda _: gen_best, lambda _: state.best_indiv, operand=None)
     best_fitness = jnp.maximum(state.best_fitness, gen_best_fit)
-
-    return SRGHNMetaState(
-        pop=next_pop,
-        key=key_next,
-        pop_fitness=next_fitness,
-        best_fitness=best_fitness,
-        best_indiv=best_indiv,
-    ), metrics
+    return SRGHNMetaState(pop=next_pop, key=key_next, pop_fitness=next_fitness, best_fitness=best_fitness, best_indiv=best_indiv), metrics
 
 
 def init_outer_evosax_state(key: jax.Array, cfg: MetaBraxConfig, adapter: EvosaxStrategyAdapter, policy_spec) -> VectorEvosaxMetaState:
@@ -1947,6 +1963,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--heldout-task-batch-size", type=int, default=None)
     parser.add_argument("--outer-pop-size", type=int, default=None)
     parser.add_argument("--outer-children-per-parent", type=int, default=None)
+    parser.add_argument("--outer-replacement-mode", choices=("elitist_union", "generational"), default=None)
     parser.add_argument("--inner-pop-size", type=int, default=None)
     parser.add_argument("--inner-children-per-parent", type=int, default=None)
     parser.add_argument("--inner-generations", type=int, default=None)
@@ -1992,6 +2009,7 @@ def make_base_cfg(args: argparse.Namespace) -> MetaBraxConfig:
             "heldout_task_batch_size": args.heldout_task_batch_size,
             "outer_pop_size": args.outer_pop_size,
             "outer_children_per_parent": args.outer_children_per_parent,
+            "outer_replacement_mode": getattr(args, "outer_replacement_mode", None),
             "inner_pop_size": args.inner_pop_size,
             "inner_children_per_parent": args.inner_children_per_parent,
             "inner_generations": args.inner_generations,

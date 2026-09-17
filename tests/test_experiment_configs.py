@@ -28,6 +28,7 @@ class ExperimentConfigTests(unittest.TestCase):
         self.assertEqual(population_for_eval_budget("evosax", 200, 1), 200)
         self.assertEqual(population_for_eval_budget("evosax", 200, 4), 200)
         self.assertEqual(population_for_eval_budget("srghn", 200, 4), 40)
+        self.assertEqual(population_for_eval_budget("srghn", 200, 2, "generational"), 200)
         with self.assertRaises(ValueError):
             population_for_eval_budget("srghn", 200, 8)
 

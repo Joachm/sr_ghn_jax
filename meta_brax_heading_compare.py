@@ -61,7 +61,7 @@ def vector_outer_candidate_evals(cfg: MetaBraxConfig) -> int:
 
 
 def srghn_outer_candidate_evals(cfg: MetaBraxConfig) -> int:
-    return cfg.outer_pop_size * (1 + cfg.outer_children_per_parent)
+    return cfg.outer_pop_size if cfg.outer_replacement_mode == "generational" else cfg.outer_pop_size * (1 + cfg.outer_children_per_parent)
 
 
 def vector_inner_support_candidate_evals(cfg: MetaBraxConfig) -> int:
@@ -88,16 +88,12 @@ def environment_episodes_per_outer_generation(
 
 
 def budget_matched_srghn_config(vector_cfg: MetaBraxConfig) -> MetaBraxConfig:
-    """Map a vector baseline budget to SR-GHN without changing its outer operator."""
-    candidates_per_outer_parent = 3  # one parent plus two children
-    if vector_cfg.outer_pop_size % candidates_per_outer_parent:
-        raise ValueError(
-            "Budget-matched SR-GHN requires a vector outer population divisible by three."
-        )
+    """Resolve the population-and-evaluation-matched generational SR-GHN config."""
     return replace(
         vector_cfg,
-        outer_pop_size=vector_cfg.outer_pop_size // candidates_per_outer_parent,
+        outer_pop_size=vector_cfg.outer_pop_size,
         outer_children_per_parent=2,
+        outer_replacement_mode="generational",
         inner_pop_size=vector_cfg.inner_pop_size,
         inner_children_per_parent=1,
         inner_generations=vector_cfg.inner_generations,
@@ -120,6 +116,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--heldout-task-batch-size", type=int, default=None)
     parser.add_argument("--outer-pop-size", type=int, default=None)
     parser.add_argument("--outer-children-per-parent", type=int, default=None)
+    parser.add_argument("--outer-replacement-mode", choices=("elitist_union", "generational"), default=None)
     parser.add_argument("--inner-pop-size", type=int, default=None)
     parser.add_argument("--inner-children-per-parent", type=int, default=None)
     parser.add_argument("--inner-generations", type=int, default=None)
