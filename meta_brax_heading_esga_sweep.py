@@ -10,8 +10,8 @@ from meta_brax_heading import MetaBraxConfig, make_base_cfg, parse_condition_spe
 
 
 DEFAULT_SWEEP_CONDITIONS = ("open_es_open_es", "simple_ga_simple_ga")
-DEFAULT_SIGMA_VALUES = (0.05, 0.1, 0.2, 0.5)
-DEFAULT_DECAY_VALUES = (1.0, 0.9995, 0.999)
+DEFAULT_SIGMA_VALUES = (0.05, 0.025, 0.01, 0.005)
+DEFAULT_DECAY_VALUES = (0.9999, 0.9995, 0.999)
 DEFAULT_WANDB_PROJECT = "meta_brax_heading_prelim_sweeps"
 
 
